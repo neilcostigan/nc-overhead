@@ -1,5 +1,5 @@
 {
-  "name": "lnrsflightsense-online",
+  "name": "nc-overhead",
   "version": "0.1.0",
   "private": true,
   "description": "Online-only, ARN/DUB/LHR-centred ADS-B viewer. No local DVB-T receiver — data via adsb.fi.",
