@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>lnrsFlightSense — Arlanda  ·  online</title>
+<style>
+  :root {
+    --bg: #05080d;
+    --bg-elev: #0d1218;
+    --bg-elev-2: #161f29;
+    --line: #2a3540;
+    --text: #ffffff;
+    --text-dim: #c2c8d0;
+    --text-faint: #8a939d;
+    --amber: #ffae1a;
+    --amber-glow: rgba(255,174,26,0.28);
+    --green: #4ade80;
+    --red: #ef4444;
+    --mono: ui-monospace, 'JetBrains Mono', Menlo, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    height: 100vh;
+    font-family: var(--mono);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 13px;
+    overflow: hidden;
+  }
+
+  /* ---------- banner ---------- */
+  .banner {
+    background: var(--bg-elev);
+    border-bottom: 1px solid var(--line);
+    padding: 10px 18px;
+    display: flex;
+    gap: 16px;
+    align-items: center;
+  }
+  .banner .badge {
+    background: rgba(255,174,26,0.12);
+    color: var(--amber);
+    border: 1px solid var(--amber);
+    padding: 3px 10px;
+    border-radius: 3px;
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+  }
+  .banner .title {
+    color: var(--amber);
+    font-size: 16px;
+    letter-spacing: 0.05em;
+    text-shadow: 0 0 12px var(--amber-glow);
+  }
+  .banner .sub {
+    color: var(--text-faint);
+    font-size: 11px;
+    margin-left: auto;
+  }
+  .city-chips {
+    display: flex;
+    gap: 6px;
+  }
+  .city-chip {
+    background: transparent;
+    border: 1px solid var(--line);
+    color: var(--text-faint);
+    padding: 4px 10px;
+    border-radius: 3px;
+    font: inherit;
+    font-size: 10px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    cursor: pointer;
+    text-decoration: none;
+  }
+  .city-chip:hover { color: var(--text); }
+  .city-chip.active {
+    background: var(--bg-elev-2);
+    color: var(--amber);
+    border-color: var(--amber);
+  }
+
+  /* ---------- layout ---------- */
+  .shell {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 380px;
+    height: calc(100vh - 44px);
+  }
+  @media (max-width: 800px) {
+    .shell { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
+    .sidebar { max-height: 45vh; }
+  }
+  .map-area {
+    position: relative;
+    background: var(--bg);
+    overflow: hidden;
+  }
+  canvas#radar {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+  .overlay {
+    position: absolute;
+    background: rgba(5,8,13,0.78);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 12px 16px;
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+  }
+  .overlay.tl { top: 16px; left: 16px; }
+  .overlay.bl { bottom: 16px; left: 16px; }
+  .overlay.br { bottom: 16px; right: 16px; font-size: 11px; color: var(--text-dim); }
+  .big-num {
+    font-size: 56px;
+    line-height: 1;
+    color: var(--amber);
+    text-shadow: 0 0 18px var(--amber-glow);
+  }
+  .big-num.empty { color: var(--text-faint); text-shadow: none; }
+  .big-label {
+    color: var(--text-faint);
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    margin-top: 6px;
+  }
+  .meta {
+    color: var(--text-dim);
+    font-size: 11px;
+    margin-top: 10px;
+  }
+  .meta b { color: var(--text); }
+  .conn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 10px;
+  }
+  .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 4px;
+    background: var(--text-faint);
+  }
+  .dot.ok { background: var(--green); box-shadow: 0 0 8px var(--green); }
+  .dot.err { background: var(--red); box-shadow: 0 0 8px var(--red); }
+
+  /* ---------- sidebar ---------- */
+  .sidebar {
+    background: var(--bg-elev);
+    border-left: 1px solid var(--line);
+    overflow-y: auto;
+  }
+  .sidebar h3 {
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    color: var(--text-faint);
+    text-transform: uppercase;
+    padding: 14px 14px 10px;
+    font-weight: 500;
+    border-bottom: 1px solid var(--line);
+  }
+  .ac-row {
+    display: grid;
+    grid-template-columns: 90px 1fr auto;
+    gap: 10px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--line);
+    cursor: pointer;
+  }
+  .ac-row:hover { background: var(--bg-elev-2); }
+  .ac-row.active {
+    background: var(--bg-elev-2);
+    border-left: 2px solid var(--amber);
+    padding-left: 12px;
+  }
+  .ac-callsign { color: var(--text); font-weight: 700; }
+  .ac-icao { color: var(--text-faint); font-size: 10px; margin-top: 2px; }
+  .ac-alt { color: var(--amber); font-size: 11px; }
+  .ac-alt.ground { color: var(--text-faint); }
+  .ac-spd { color: var(--text-dim); font-size: 11px; margin-top: 2px; }
+  .ac-dist { color: var(--text); text-align: right; font-size: 13px; }
+  .ac-brg { color: var(--amber); font-size: 10px; text-align: right; margin-top: 2px; }
+  .empty {
+    padding: 40px 16px;
+    text-align: center;
+    color: var(--text-faint);
+    font-size: 11px;
+  }
+  .empty b { display: block; color: var(--text-dim); margin-bottom: 6px; }
+
+  /* ---------- footer ---------- */
+  .footer {
+    border-top: 1px solid var(--line);
+    padding: 10px 14px;
+    color: var(--text-faint);
+    font-size: 10px;
+    line-height: 1.6;
+  }
+  .footer a { color: var(--text-dim); text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<div class="banner">
+  <span class="badge">Online  ·  no DVB-T receiver</span>
+  <span class="title" id="banner-title">lnrsFlightSense — Stockholm Arlanda</span>
+  <span class="city-chips" id="city-chips"></span>
+  <span class="sub">data via <a href="https://adsb.fi" style="color:var(--text-dim)">adsb.fi</a> — community ADS-B aggregator</span>
+</div>
+
+<div class="shell">
+  <div class="map-area">
+    <canvas id="radar"></canvas>
+
+    <div class="overlay tl">
+      <div id="airport-codes" style="color:var(--amber);font-size:18px;letter-spacing:0.05em;text-shadow:0 0 12px var(--amber-glow);">ARN  ·  ESSA</div>
+      <div id="airport-name" style="color:var(--text-faint);font-size:9px;letter-spacing:0.2em;margin-top:2px;">STOCKHOLM ARLANDA</div>
+      <div class="conn"><span class="dot" id="dot"></span><span id="conn-text">Connecting…</span></div>
+    </div>
+
+    <div class="overlay bl">
+      <div class="big-num empty" id="count">0</div>
+      <div class="big-label">IN  RANGE</div>
+      <div class="meta">
+        <span>radius <b id="radius-label">100 nm</b></span>  ·
+        <span>centre <b id="centre-label">59.65, 17.92</b></span>  ·
+        <span>upd <b id="updated">—</b></span>
+      </div>
+    </div>
+
+    <div class="overlay br">
+      <div>refresh every <b id="poll-label">5 s</b></div>
+      <div>data delay ~2–10 s (aggregator)</div>
+    </div>
+  </div>
+
+  <div class="sidebar">
+    <h3>Aircraft  ·  nearest first</h3>
+    <div id="list">
+      <div class="empty">
+        <b>Waiting for first poll…</b>
+        adsb.fi aggregates from volunteer receivers worldwide.
+        Some quiet pockets of sky have sparse coverage.
+      </div>
+    </div>
+    <div class="footer">
+      Online-only build — no local DVB-T antenna attached.<br>
+      Live picture is the public adsb.fi v3 feed; updates 1 Hz,
+      rate-limited to 1 req/s by the upstream.
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+// Presets — pick via ?city=ARN|DUB|LHR|EXT|CARLOW (default ARN).
+// Carlow has no airport; it's a town-centre vantage point — radius is
+// the same 100 nm so the user still sees passing traffic.
+const CITIES = {
+  ARN:    { iata: "ARN",    icao: "ESSA", name: "Stockholm Arlanda",
+            lat: 59.6519, lon: 17.9186 },
+  DUB:    { iata: "DUB",    icao: "EIDW", name: "Dublin",
+            lat: 53.4213, lon: -6.2701 },
+  LHR:    { iata: "LHR",    icao: "EGLL", name: "London Heathrow",
+            lat: 51.4700, lon: -0.4543 },
+  EXT:    { iata: "EXT",    icao: "EGTE", name: "Exeter",
+            lat: 50.7344, lon: -3.4139 },
+  CARLOW: { iata: "CARLOW", icao: "",     name: "Carlow",
+            lat: 52.8407, lon: -6.9269 },
+};
+const DEFAULT_CITY = "ARN";
+const RADIUS_NM = 100;     // adsb.fi accepts up to 250 nm
+const POLL_MS = 5000;
+
+const params = new URLSearchParams(location.search);
+const cityKey = (params.get("city") || DEFAULT_CITY).toUpperCase();
+const CENTRE = CITIES[cityKey] || CITIES[DEFAULT_CITY];
+
+const $ = sel => document.querySelector(sel);
+const radar = $("#radar");
+const ctx = radar.getContext("2d");
+let aircraft = [];
+let selectedHex = null;
+
+// ---------- city chips ----------
+(function buildChips() {
+  const wrap = $("#city-chips");
+  const here = (params.get("city") || DEFAULT_CITY).toUpperCase();
+  for (const [key, c] of Object.entries(CITIES)) {
+    const a = document.createElement("a");
+    a.className = "city-chip" + (key === here ? " active" : "");
+    a.href = "?city=" + key;
+    a.textContent = c.iata;
+    a.title = c.icao ? (c.name + " (" + c.icao + ")") : c.name;
+    wrap.appendChild(a);
+  }
+  $("#banner-title").textContent =
+      "lnrsFlightSense — " + CENTRE.name;
+  $("#airport-codes").textContent = CENTRE.icao
+      ? (CENTRE.iata + "  ·  " + CENTRE.icao)
+      : CENTRE.iata;
+  $("#airport-name").textContent = CENTRE.name.toUpperCase();
+  $("#centre-label").textContent =
+      CENTRE.lat.toFixed(2) + ", " + CENTRE.lon.toFixed(2);
+  document.title =
+      "lnrsFlightSense — " + CENTRE.name + "  ·  online";
+})();
+
+// ---------- math ----------
+function haversineNm(lat1, lon1, lat2, lon2) {
+  const R = 3440.065;       // Earth radius in nautical miles
+  const toRad = d => d * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat/2)**2 +
+            Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+            Math.sin(dLon/2)**2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+function bearingDeg(lat1, lon1, lat2, lon2) {
+  const toRad = d => d * Math.PI / 180;
+  const toDeg = r => r * 180 / Math.PI;
+  const φ1 = toRad(lat1), φ2 = toRad(lat2);
+  const Δλ = toRad(lon2 - lon1);
+  const y = Math.sin(Δλ) * Math.cos(φ2);
+  const x = Math.cos(φ1)*Math.sin(φ2) - Math.sin(φ1)*Math.cos(φ2)*Math.cos(Δλ);
+  return (toDeg(Math.atan2(y, x)) + 360) % 360;
+}
+function compass(d) {
+  const dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+  return dirs[Math.round(d / 22.5) % 16];
+}
+
+// ---------- fetch ----------
+async function tick() {
+  try {
+    const url = `/api/aircraft.json?lat=${CENTRE.lat}&lon=${CENTRE.lon}&dist=${RADIUS_NM}`;
+    const r = await fetch(url, { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const data = await r.json();
+    aircraft = (data.aircraft || [])
+      .filter(a => typeof a.lat === "number" && typeof a.lon === "number")
+      .map(a => ({
+        ...a,
+        distNm: haversineNm(CENTRE.lat, CENTRE.lon, a.lat, a.lon),
+        bearing: bearingDeg(CENTRE.lat, CENTRE.lon, a.lat, a.lon),
+      }))
+      .sort((a, b) => a.distNm - b.distNm);
+    setConn("ok", "Connected  ·  " + aircraft.length + " aircraft");
+    $("#updated").textContent = new Date().toLocaleTimeString();
+    render();
+  } catch (e) {
+    setConn("err", "Connection error  ·  " + e.message);
+  }
+}
+
+function setConn(state, text) {
+  const dot = $("#dot");
+  dot.className = "dot " + (state === "ok" ? "ok" : state === "err" ? "err" : "");
+  $("#conn-text").textContent = text;
+}
+
+// ---------- render ----------
+function render() {
+  drawRadar();
+  drawList();
+}
+
+function resizeCanvas() {
+  const dpr = window.devicePixelRatio || 1;
+  const rect = radar.getBoundingClientRect();
+  radar.width = rect.width * dpr;
+  radar.height = rect.height * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+function drawRadar() {
+  resizeCanvas();
+  const w = radar.clientWidth, h = radar.clientHeight;
+  const cx = w / 2, cy = h / 2;
+  const r = Math.min(w, h) / 2 - 16;
+
+  ctx.fillStyle = "#11141a";
+  ctx.fillRect(0, 0, w, h);
+
+  // range rings
+  ctx.strokeStyle = "rgba(45,55,75,0.9)";
+  ctx.lineWidth = 1;
+  for (let i = 1; i <= 4; i++) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, r * (i / 4), 0, 2 * Math.PI);
+    ctx.stroke();
+  }
+  ctx.beginPath();
+  ctx.moveTo(cx - r, cy); ctx.lineTo(cx + r, cy);
+  ctx.moveTo(cx, cy - r); ctx.lineTo(cx, cy + r);
+  ctx.stroke();
+
+  // labels
+  ctx.fillStyle = "#6c7689";
+  ctx.font = "12px " + getComputedStyle(document.body).fontFamily;
+  ctx.fillText("N", cx - 4, cy - r - 6);
+  ctx.fillText(RADIUS_NM + " nm", cx + r - 36, cy - 6);
+
+  // centre dot
+  ctx.fillStyle = "#ffae1a";
+  ctx.beginPath(); ctx.arc(cx, cy, 3, 0, 2 * Math.PI); ctx.fill();
+
+  // aircraft
+  ctx.font = "11px " + getComputedStyle(document.body).fontFamily;
+  for (const a of aircraft) {
+    if (a.distNm > RADIUS_NM) continue;
+    const scale = r / RADIUS_NM;
+    const dLat = a.lat - CENTRE.lat;
+    const dLon = (a.lon - CENTRE.lon) * Math.cos(CENTRE.lat * Math.PI / 180);
+    const x = cx + dLon * 60 * scale;
+    const y = cy - dLat * 60 * scale;
+
+    const sel = a.hex === selectedHex;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(((a.track || 0) - 0) * Math.PI / 180);
+    ctx.fillStyle = sel ? "#ffae1a" : "#78dca0";
+    ctx.beginPath();
+    ctx.moveTo(0, -8); ctx.lineTo(-5, 6); ctx.lineTo(5, 6);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+
+    const cs = (a.flight || a.hex || "").trim();
+    if (cs) {
+      ctx.fillStyle = sel ? "#ffae1a" : "#b8c3d4";
+      ctx.fillText(cs, x + 8, y + 4);
+    }
+  }
+}
+
+function drawList() {
+  const list = $("#list");
+  if (aircraft.length === 0) {
+    list.innerHTML = '<div class="empty"><b>No aircraft in range</b>Quiet pocket of sky — try again in a few seconds.</div>';
+    $("#count").textContent = "0";
+    $("#count").classList.add("empty");
+    return;
+  }
+  $("#count").textContent = aircraft.length;
+  $("#count").classList.remove("empty");
+
+  const html = aircraft.slice(0, 60).map(a => {
+    const cs = (a.flight || a.hex || "").trim() || "—";
+    const altRaw = a.alt_baro ?? a.altitude;
+    const onGround = altRaw === "ground";
+    const alt = onGround ? "ground"
+              : (typeof altRaw === "number" ? altRaw.toLocaleString() + " ft" : "—");
+    const spd = typeof a.gs === "number" ? Math.round(a.gs) + " kt" : "";
+    const dist = a.distNm < 10 ? a.distNm.toFixed(1) : Math.round(a.distNm);
+    return `<div class="ac-row ${a.hex === selectedHex ? 'active' : ''}" data-hex="${a.hex}">
+      <div>
+        <div class="ac-callsign">${cs}</div>
+        <div class="ac-icao">${(a.hex || "").toUpperCase()}</div>
+      </div>
+      <div>
+        <div class="ac-alt ${onGround ? 'ground' : ''}">${alt}</div>
+        <div class="ac-spd">${spd}</div>
+      </div>
+      <div>
+        <div class="ac-dist">${dist} nm</div>
+        <div class="ac-brg">${compass(a.bearing)}  ${Math.round(a.bearing)}°</div>
+      </div>
+    </div>`;
+  }).join("");
+  list.innerHTML = html;
+  list.querySelectorAll(".ac-row").forEach(el => {
+    el.addEventListener("click", () => {
+      selectedHex = el.dataset.hex;
+      render();
+    });
+  });
+}
+
+// ---------- boot ----------
+window.addEventListener("resize", () => requestAnimationFrame(drawRadar));
+tick();
+setInterval(tick, POLL_MS);
+</script>
+</body>
+</html>
