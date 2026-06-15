@@ -271,6 +271,88 @@
   }
   .amber-btn:hover { background: rgba(255,174,26,0.1); }
 
+  /* ---------- print / save-as-PDF ---------- */
+  /* Hidden on screen; only renders on the print page. Filled in by JS
+   * just before window.print() so the header carries the aircraft
+   * details into the PDF. */
+  #print-header {
+    display: none;
+  }
+  @media print {
+    /* Reset to paper. */
+    html, body { background: #ffffff !important; color: #111 !important; height: auto !important; overflow: visible !important; font-size: 11pt; }
+    body * { visibility: hidden !important; }
+    /* Show only the print header + the active explain text + their children. */
+    #print-header, #print-header *,
+    .detail .explain-text:not(.loading):not(.error),
+    .detail .explain-text:not(.loading):not(.error) * {
+      visibility: visible !important;
+    }
+    #print-header {
+      display: block !important;
+      visibility: visible !important;
+      position: relative !important;
+      padding: 0 0 14pt 0;
+      border-bottom: 1pt solid #444;
+      margin-bottom: 14pt;
+      color: #111;
+      font-family: ui-sans-serif, system-ui, Helvetica, Arial, sans-serif;
+    }
+    #print-header .title {
+      font-size: 22pt;
+      letter-spacing: 0.02em;
+      margin-bottom: 4pt;
+    }
+    #print-header .sub  { font-size: 10pt; color: #555; }
+    #print-header .meta {
+      margin-top: 10pt;
+      display: grid;
+      grid-template-columns: 80pt 1fr;
+      gap: 4pt 12pt;
+      font-size: 9pt;
+    }
+    #print-header .meta .k {
+      color: #555;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      font-size: 8pt;
+    }
+    /* The briefing itself, repositioned to fill the page. */
+    .detail .explain-text {
+      position: absolute !important;
+      top: 0 !important;
+      left: 0 !important;
+      width: 100% !important;
+      max-height: none !important;
+      overflow: visible !important;
+      background: #ffffff !important;
+      color: #111 !important;
+      border: none !important;
+      padding: 0 !important;
+      margin: 0 !important;
+      font-family: ui-serif, Georgia, "Times New Roman", serif !important;
+      font-size: 11pt !important;
+      line-height: 1.55 !important;
+    }
+    .detail .explain-text p { color: #111 !important; margin: 0 0 8pt; }
+    .detail .explain-text b { color: #000 !important; }
+    .detail .explain-text p:has(> b:first-child) {
+      margin-top: 12pt;
+      color: #000 !important;
+    }
+    .detail .explain-text p:has(> b:first-child) b {
+      color: #000 !important;
+      font-size: 10pt !important;
+      letter-spacing: 0.1em;
+    }
+    .detail .explain-text .model-tag {
+      color: #666 !important;
+      border-top: 1pt solid #ccc !important;
+      font-size: 8pt !important;
+    }
+    @page { margin: 16mm 18mm; }
+  }
+
   /* ---------- layout ---------- */
   .shell {
     display: grid;
@@ -684,6 +766,13 @@
   </span>
   <span class="sub">data via <a href="https://adsb.fi" style="color:var(--text-dim)">adsb.fi</a> — community ADS-B aggregator</span>
   <span class="cog-btn" id="cog-btn" title="Settings (API keys, LLM provider)">⚙</span>
+</div>
+
+<!-- ============ Print-only header (populated just before window.print) ============ -->
+<div id="print-header" aria-hidden="true">
+  <div class="title" id="print-title">—</div>
+  <div class="sub" id="print-sub">Aircraft briefing</div>
+  <div class="meta" id="print-meta"></div>
 </div>
 
 <!-- ============ Settings modal ============ -->
@@ -1421,6 +1510,7 @@ function renderDetail() {
       <div class="k">route</div>        <div class="v" data-route>${cs ? "loading…" : "—"}</div>
     </div>
     <button class="explain-btn" data-explain>Explain  ✦</button>
+    <button class="explain-btn" data-print title="Print or save as PDF — opens system print dialog">📄  Save as PDF</button>
     <div class="explain-text" style="display:none" data-explain-out></div>
   `;
   row.insertAdjacentElement("afterend", card);
@@ -1429,6 +1519,49 @@ function renderDetail() {
   restoreExplain(ac.hex);
   card.querySelector("[data-explain]").addEventListener("click", () =>
       runExplain(ac, card));
+  card.querySelector("[data-print]").addEventListener("click", () =>
+      printExplain(ac));
+}
+
+/** Fill the print-only header with details about this aircraft + invoke
+ *  the browser print dialog. The print stylesheet hides everything else
+ *  and stretches the briefing across the page. */
+function printExplain(ac) {
+  const st = cardState.get(ac.hex) || {};
+  if (!st.explain) {
+    alert("Click Explain ✦ first — there's no briefing to save yet.");
+    return;
+  }
+  const cs = (ac.flight || "").trim() || ac.hex.toUpperCase();
+  const info  = st.info  || {};
+  const route = st.route || "";
+  $("#print-title").textContent =
+      `${cs}  ·  ${(ac.hex || "").toUpperCase()}`;
+  $("#print-sub").textContent =
+      `Aircraft briefing  ·  Overhead — ${CENTRE.name}  ·  ${new Date().toLocaleString()}`;
+  const rows = [
+    ["Callsign",     cs],
+    ["ICAO24",       (ac.hex || "").toUpperCase()],
+    ["Registration", info.registration && info.registration !== "—" ? info.registration : "—"],
+    ["Type",         info.type         && info.type         !== "—" ? info.type         : "—"],
+    ["Operator",     info.operator     && info.operator     !== "—" ? info.operator     : "—"],
+    ["Route",        route || "—"],
+    ["Source",       "adsb.fi  ·  hexdb.io  ·  adsbdb.com"],
+    ["Model",        st.explain.model || "—"],
+    ["Generated",    new Date().toISOString()]
+  ];
+  $("#print-meta").innerHTML = rows
+      .map(([k, v]) => `<div class="k">${k}</div><div class="v">${escapeHtml(v)}</div>`)
+      .join("");
+  // setTimeout ensures the DOM updates before the print dialog snapshots.
+  setTimeout(() => window.print(), 50);
+}
+
+function escapeHtml(s) {
+  return (s == null ? "" : String(s))
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 async function loadAircraftInfo(hex, card) {
