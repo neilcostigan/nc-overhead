@@ -630,10 +630,22 @@
     max-height: 60vh;
     overflow-y: auto;
   }
-  .detail .explain-text p  { margin: 0 0 8px; }
-  .detail .explain-text ul { margin: 0 0 8px; padding-left: 16px; }
+  .detail .explain-text p  { margin: 0 0 10px; }
+  .detail .explain-text ul { margin: 0 0 10px; padding-left: 16px; }
   .detail .explain-text li { margin-bottom: 3px; }
   .detail .explain-text b  { color: var(--text); }
+  /* When a paragraph starts with a single bolded label (the section
+   * heading pattern the prompt uses), space it like a heading. */
+  .detail .explain-text p:has(> b:first-child) {
+    margin-top: 14px;
+    color: var(--text);
+  }
+  .detail .explain-text p:has(> b:first-child) b {
+    color: var(--amber);
+    font-size: 11px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+  }
   .detail .explain-text .model-tag {
     display: block;
     margin-top: 6px;
@@ -1389,7 +1401,7 @@ function renderDetail() {
   row.insertAdjacentElement("afterend", card);
   loadAircraftInfo(ac.hex, card);
   if (cs) loadRoute(cs, card);
-  restoreExplain(ac.hex, card);
+  restoreExplain(ac.hex);
   card.querySelector("[data-explain]").addEventListener("click", () =>
       runExplain(ac, card));
 }
@@ -1460,13 +1472,14 @@ async function loadRoute(callsign, card) {
   }
 }
 
+/** Kick off an Explain call. State (loading / error / result) lives on
+ *  cardState so the 5-second list rebuild can repaint whatever the
+ *  current state is — the fetch never writes to a detached node. */
 async function runExplain(ac, card) {
-  const btn = card.querySelector("[data-explain]");
-  const out = card.querySelector("[data-explain-out]");
-  btn.disabled = true;
-  out.style.display = "";
-  out.className = "explain-text loading";
-  out.textContent = "Asking the LLM…";
+  const prev = cardState.get(ac.hex) || {};
+  cardState.set(ac.hex, { ...prev, explainState: "loading" });
+  paintExplain(ac.hex);
+
   try {
     const body = {
       hex: ac.hex,
@@ -1484,36 +1497,60 @@ async function runExplain(ac, card) {
     });
     const d = await r.json();
     if (!r.ok) {
-      out.className = "explain-text error";
-      out.textContent = d.error || ("HTTP " + r.status);
-    } else {
-      out.className = "explain-text";
-      out.innerHTML = mdToHtml(d.text)
-          + (d.model ? `<span class="model-tag">model: ${d.model}</span>` : "");
       cardState.set(ac.hex, {
         ...(cardState.get(ac.hex) || {}),
+        explainState: "error",
+        explainError: d.error || ("HTTP " + r.status) + (d.body ? "  ·  " + d.body : "")
+      });
+    } else {
+      cardState.set(ac.hex, {
+        ...(cardState.get(ac.hex) || {}),
+        explainState: "ok",
         explain: { text: d.text, model: d.model }
       });
     }
   } catch (e) {
+    cardState.set(ac.hex, {
+      ...(cardState.get(ac.hex) || {}),
+      explainState: "error",
+      explainError: String(e)
+    });
+  }
+  paintExplain(ac.hex);
+}
+
+/** Repaint the Explain pane from cardState. Always finds the currently
+ *  in-DOM card via querySelector — survives card recreation on tick. */
+function paintExplain(hex) {
+  // Skip if a different aircraft is now selected.
+  if (selectedHex !== hex) return;
+  const card = document.querySelector(".detail");
+  if (!card) return;
+  const out = card.querySelector("[data-explain-out]");
+  const btn = card.querySelector("[data-explain]");
+  if (!out || !btn) return;
+  const st = cardState.get(hex) || {};
+  if (st.explainState === "loading") {
+    out.style.display = "";
+    out.className = "explain-text loading";
+    out.textContent = "Asking the LLM (verbose mode — this can take 10–30 s)…";
+    btn.disabled = true;
+  } else if (st.explainState === "error") {
+    out.style.display = "";
     out.className = "explain-text error";
-    out.textContent = String(e);
-  } finally {
+    out.textContent = st.explainError || "(unknown error)";
+    btn.disabled = false;
+  } else if (st.explainState === "ok" && st.explain) {
+    out.style.display = "";
+    out.className = "explain-text";
+    out.innerHTML = mdToHtml(st.explain.text)
+        + (st.explain.model ? `<span class="model-tag">model: ${st.explain.model}</span>` : "");
     btn.disabled = false;
   }
 }
 
-/** If we've previously asked Explain for this hex, restore the cached
- *  HTML into the card so the 5-second list rebuild doesn't reset it. */
-function restoreExplain(hex, card) {
-  const cached = (cardState.get(hex) || {}).explain;
-  if (!cached) return;
-  const out = card.querySelector("[data-explain-out]");
-  out.style.display = "";
-  out.className = "explain-text";
-  out.innerHTML = mdToHtml(cached.text)
-      + (cached.model ? `<span class="model-tag">model: ${cached.model}</span>` : "");
-}
+/** Old name kept for the renderDetail call site — delegates to paintExplain. */
+function restoreExplain(hex) { paintExplain(hex); }
 
 // ---------- settings modal wiring ----------
 function openSettings() {
