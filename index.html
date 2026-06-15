@@ -303,6 +303,48 @@
   }
   .overlay.tl { top: 16px; left: 16px; }
   .overlay.tr { top: 16px; right: 16px; font-size: 11px; color: var(--text-dim); }
+  .zoom-overlay {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 10px;
+    min-width: 56px;
+  }
+  .zoom-btn {
+    background: transparent;
+    border: 1px solid var(--line);
+    color: var(--text);
+    width: 32px; height: 32px;
+    border-radius: 4px;
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    font-family: var(--mono);
+  }
+  .zoom-btn:hover { border-color: var(--amber); color: var(--amber); }
+  .zoom-btn:disabled { opacity: 0.35; cursor: default; }
+  .zoom-readout {
+    color: var(--amber);
+    font-size: 13px;
+    text-align: center;
+    line-height: 1.1;
+  }
+  .zoom-readout span {
+    display: block;
+    color: var(--text-faint);
+    font-size: 9px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+  }
+  .zoom-hint {
+    color: var(--text-faint);
+    font-size: 8px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    text-align: center;
+    margin-top: 2px;
+  }
   .overlay.bl { bottom: 16px; left: 16px; }
   .overlay.br { bottom: 16px; right: 16px; font-size: 11px; color: var(--text-dim); }
 
@@ -747,6 +789,14 @@
       </div>
     </div>
 
+    <!-- top-right: zoom controls -->
+    <div class="overlay tr zoom-overlay" id="zoom-overlay">
+      <button type="button" id="zoom-in"  class="zoom-btn" title="Zoom in (shorter range)">+</button>
+      <div class="zoom-readout"><b id="zoom-readout">100</b><span>nm</span></div>
+      <button type="button" id="zoom-out" class="zoom-btn" title="Zoom out (longer range)">−</button>
+      <div class="zoom-hint" id="zoom-hint">scroll to zoom</div>
+    </div>
+
     <div class="overlay br">
       <div>refresh every <b id="poll-label">5 s</b></div>
       <div>data delay ~2–10 s (aggregator)</div>
@@ -823,7 +873,9 @@ const CITIES = {
             lat: 52.8407, lon: -6.9269 },
 };
 const DEFAULT_CITY = "ARN";
-const RADIUS_NM = 100;     // adsb.fi accepts up to 250 nm
+const MIN_RADIUS_NM = 10;
+const MAX_RADIUS_NM = 250;   // adsb.fi v3 caps here
+let   RADIUS_NM     = 100;   // mutable — adjusted by zoom controls
 const POLL_MS = 5000;
 
 const params = new URLSearchParams(location.search);
@@ -959,6 +1011,39 @@ radar.addEventListener("click", (ev) => {
     if (row) row.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }
 });
+
+// ---------- radar zoom ----------
+/** Set the radar range (in nm), clamped to bounds. Triggers a redraw,
+ *  updates the readouts, and fires an immediate fetch so the data
+ *  matches the new view rather than waiting for the next 5s tick. */
+function setRadius(nm) {
+  const next = Math.max(MIN_RADIUS_NM, Math.min(MAX_RADIUS_NM, Math.round(nm)));
+  if (next === RADIUS_NM) return;
+  RADIUS_NM = next;
+  document.getElementById("zoom-readout").textContent = RADIUS_NM;
+  document.getElementById("radius-label").textContent = RADIUS_NM + " nm";
+  document.getElementById("zoom-in").disabled  = (RADIUS_NM <= MIN_RADIUS_NM);
+  document.getElementById("zoom-out").disabled = (RADIUS_NM >= MAX_RADIUS_NM);
+  // Pull fresh data for the new dist; cached upstream so it's cheap.
+  tick();
+}
+
+document.getElementById("zoom-in").addEventListener("click",
+    () => setRadius(zoomStep(RADIUS_NM, "in")));
+document.getElementById("zoom-out").addEventListener("click",
+    () => setRadius(zoomStep(RADIUS_NM, "out")));
+
+// Wheel = zoom; preventDefault so the page doesn't scroll under us.
+radar.addEventListener("wheel", (ev) => {
+  ev.preventDefault();
+  setRadius(zoomStep(RADIUS_NM, ev.deltaY < 0 ? "in" : "out"));
+}, { passive: false });
+
+/** Multiplicative steps — feels right at every zoom level. */
+function zoomStep(curr, dir) {
+  const factor = dir === "in" ? 0.7 : 1.4;
+  return curr * factor;
+}
 
 // ---------- city picker (dropdown + custom code) ----------
 (function buildPicker() {
@@ -1579,6 +1664,9 @@ async function tickIss() {
 
 // ---------- boot ----------
 window.addEventListener("resize", () => requestAnimationFrame(drawRadar));
+// Sync zoom controls with the initial RADIUS_NM.
+document.getElementById("zoom-readout").textContent = RADIUS_NM;
+document.getElementById("radius-label").textContent = RADIUS_NM + " nm";
 customCentreReady.then(() => {
   tick();
   tickIss();
