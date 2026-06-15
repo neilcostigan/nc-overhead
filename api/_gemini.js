@@ -29,16 +29,20 @@ export async function callGemini(prompt, opts = {}) {
     generationConfig: { maxOutputTokens: maxTokens, temperature }
   });
 
-  // Two attempts on the primary, one on the fallback. Backoffs in between.
+  // Three attempts. Short backoffs for transient 5xx, much longer for
+  // 429 (rate limit) — Gemini's free-tier window is per-minute, so a
+  // sub-second wait would just hit the same limit again.
   const attempts = [
-    { model: PRIMARY,  wait: 0 },
-    { model: PRIMARY,  wait: 700 },
-    { model: FALLBACK, wait: 1500 }
+    { model: PRIMARY,  wait: 0,    waitOn429: 0 },
+    { model: PRIMARY,  wait: 700,  waitOn429: 5000 },
+    { model: FALLBACK, wait: 1500, waitOn429: 15000 }
   ];
 
   let lastErr = { error: "no attempts ran", status: 500 };
+  let lastStatus = 0;
   for (const a of attempts) {
-    if (a.wait) await sleep(a.wait);
+    const w = lastStatus === 429 ? a.waitOn429 : a.wait;
+    if (w) await sleep(w);
     const url = `${BASE_URL}/${a.model}:generateContent?key=${key}`;
     try {
       const r = await fetch(url, {
@@ -52,9 +56,9 @@ export async function callGemini(prompt, opts = {}) {
                   || "(empty response)";
         return { text, model: a.model };
       }
-      // Retry on 5xx + a couple of 4xx codes that Gemini uses to mean
-      // "try again" (e.g., 429 rate limit). Hard fail on 400/401/403.
+      // Retry on 5xx + 429 (rate limit). Hard fail on 400/401/403.
       const status = r.status;
+      lastStatus = status;
       const errBody = await r.text().catch(() => "");
       lastErr = {
         error: `gemini ${status}`,
@@ -62,7 +66,7 @@ export async function callGemini(prompt, opts = {}) {
         body: errBody.slice(0, 400),
         model: a.model
       };
-      if (status < 500 && status !== 429) break;   // permanent — stop retrying
+      if (status < 500 && status !== 429) break;   // permanent
     } catch (e) {
       lastErr = { error: String(e), status: 500, model: a.model };
     }

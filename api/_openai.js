@@ -36,14 +36,16 @@ export async function callOpenAI(prompt, opts = {}) {
   });
 
   const attempts = [
-    { model: primary,  wait: 0 },
-    { model: primary,  wait: 700 },
-    { model: fallback, wait: 1500 }
+    { model: primary,  wait: 0,    waitOn429: 0 },
+    { model: primary,  wait: 700,  waitOn429: 5000 },
+    { model: fallback, wait: 1500, waitOn429: 15000 }
   ];
 
   let lastErr = { error: "no attempts ran", status: 500 };
+  let lastStatus = 0;
   for (const a of attempts) {
-    if (a.wait) await sleep(a.wait);
+    const w = lastStatus === 429 ? a.waitOn429 : a.wait;
+    if (w) await sleep(w);
     try {
       const reqBody = a.model === primary
           ? body
@@ -67,6 +69,7 @@ export async function callOpenAI(prompt, opts = {}) {
         return { text, model: data?.model || a.model };
       }
       const status = r.status;
+      lastStatus = status;
       const errBody = await r.text().catch(() => "");
       lastErr = {
         error: `openai ${status}`,

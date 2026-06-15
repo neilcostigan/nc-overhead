@@ -215,7 +215,8 @@
     letter-spacing: 0.1em;
     text-transform: uppercase;
   }
-  .settings-modal label.field input {
+  .settings-modal label.field input,
+  .settings-modal label.field select {
     background: var(--bg);
     border: 1px solid var(--line);
     color: var(--text);
@@ -226,7 +227,8 @@
     letter-spacing: normal;
     text-transform: none;
   }
-  .settings-modal label.field input:focus { outline: none; border-color: var(--amber); }
+  .settings-modal label.field input:focus,
+  .settings-modal label.field select:focus { outline: none; border-color: var(--amber); }
   .settings-hint {
     color: var(--text-faint);
     font-size: 11px;
@@ -411,7 +413,8 @@
     flex: 1;
   }
   .analyse-close,
-  .analyse-expand {
+  .analyse-expand,
+  .analyse-refresh {
     cursor: pointer;
     color: var(--text-faint);
     padding: 0 4px;
@@ -419,7 +422,12 @@
     user-select: none;
   }
   .analyse-close:hover,
-  .analyse-expand:hover { color: var(--text); }
+  .analyse-expand:hover,
+  .analyse-refresh:hover { color: var(--amber); }
+  .analyse-refresh.busy {
+    opacity: 0.4;
+    pointer-events: none;
+  }
   .analyse-panel.fullscreen .analyse-expand { color: var(--amber); }
   .analyse-section { border-top: 1px solid var(--line); }
   .analyse-section:first-of-type { border-top: none; }
@@ -686,6 +694,25 @@
     </div>
 
     <div class="settings-section">
+      <div class="settings-section-head">Analyse panel</div>
+      <label class="field">
+        <span>Auto-refresh</span>
+        <select id="settings-refresh">
+          <option value="0">Off  ·  manual refresh only  (default)</option>
+          <option value="30">Every 30 s</option>
+          <option value="60">Every 1 min</option>
+          <option value="120">Every 2 min</option>
+          <option value="300">Every 5 min</option>
+        </select>
+      </label>
+      <div class="settings-hint">
+        Auto-refresh fires both the Scene and the High-altitude calls every
+        interval — useful for an ambient view, but eats LLM quota fast. Off
+        is friendliest to free-tier keys.
+      </div>
+    </div>
+
+    <div class="settings-section">
       <div class="settings-section-head">Storage</div>
       <div class="settings-hint">
         Keys live in your browser's localStorage. They're sent only to the Overhead serverless function, which forwards them to your chosen LLM provider. Nothing is logged or stored on the server. Clear with the button below.
@@ -728,7 +755,8 @@
     <div id="analyse-panel" class="analyse-panel" style="display:none;">
       <div class="analyse-head">
         <span>Your sky  ·  live read</span>
-        <span class="analyse-meta" id="analyse-meta">refreshing every 30 s</span>
+        <span class="analyse-meta" id="analyse-meta">manual refresh</span>
+        <span class="analyse-refresh" id="analyse-refresh" title="Refresh now">↻</span>
         <span class="analyse-expand" id="analyse-expand" title="Expand to fullscreen">⤢</span>
         <span class="analyse-close" id="analyse-close" title="Close">✕</span>
       </div>
@@ -838,7 +866,10 @@ const SETTINGS_DEFAULTS = {
   geminiModel: "",
   openaiKey: "",
   openaiUrl: "",
-  openaiModel: ""
+  openaiModel: "",
+  /** 0 = manual refresh only (default); otherwise seconds between
+   *  auto-refreshes of the Analyse the sky panel. */
+  analyseRefreshSec: 0
 };
 function loadSettings() {
   try {
@@ -1369,6 +1400,7 @@ function openSettings() {
   $("#settings-openai-key").value   = s.openaiKey   || "";
   $("#settings-openai-url").value   = s.openaiUrl   || "";
   $("#settings-openai-model").value = s.openaiModel || "";
+  $("#settings-refresh").value      = String(s.analyseRefreshSec || 0);
   $("#settings-msg").textContent    = "";
   $("#settings-backdrop").style.display = "";
   $("#settings-modal").style.display = "";
@@ -1385,9 +1417,14 @@ function commitSettings() {
     geminiModel: $("#settings-gemini-model").value.trim(),
     openaiKey:   $("#settings-openai-key").value.trim(),
     openaiUrl:   $("#settings-openai-url").value.trim(),
-    openaiModel: $("#settings-openai-model").value.trim()
+    openaiModel: $("#settings-openai-model").value.trim(),
+    analyseRefreshSec: parseInt($("#settings-refresh").value, 10) || 0
   };
   saveSettings(s);
+  // Re-apply refresh policy to a currently-open analyse panel.
+  if (document.getElementById("analyse-panel").style.display !== "none") {
+    applyAnalyseRefreshPolicy();
+  }
   const msg = $("#settings-msg");
   msg.style.color = "var(--green)";
   msg.textContent = "saved";
@@ -1406,12 +1443,12 @@ document.getElementById("settings-backdrop").addEventListener("click", closeSett
 document.getElementById("settings-save").addEventListener("click", commitSettings);
 document.getElementById("settings-clear").addEventListener("click", clearSettings);
 
-// ---------- Analyse the sky (two sections, 30s refresh) ----------
-const ANALYSE_REFRESH_MS = 30000;
+// ---------- Analyse the sky (two sections, manual refresh by default) ----------
 let analyseTimer = null;
 
 document.getElementById("analyse-btn").addEventListener("click", openAnalyse);
 document.getElementById("analyse-close").addEventListener("click", closeAnalyse);
+document.getElementById("analyse-refresh").addEventListener("click", runAnalysePair);
 document.getElementById("analyse-expand").addEventListener("click", () => {
   document.getElementById("analyse-panel").classList.toggle("fullscreen");
 });
@@ -1419,8 +1456,7 @@ document.getElementById("analyse-expand").addEventListener("click", () => {
 function openAnalyse() {
   document.getElementById("analyse-panel").style.display = "";
   runAnalysePair();
-  if (analyseTimer) clearInterval(analyseTimer);
-  analyseTimer = setInterval(runAnalysePair, ANALYSE_REFRESH_MS);
+  applyAnalyseRefreshPolicy();
 }
 
 function closeAnalyse() {
@@ -1428,14 +1464,34 @@ function closeAnalyse() {
   if (analyseTimer) { clearInterval(analyseTimer); analyseTimer = null; }
 }
 
+/** Read analyseRefreshSec from settings, (re)apply the interval, and
+ *  update the meta line so the user sees the current mode. */
+function applyAnalyseRefreshPolicy() {
+  const s = loadSettings();
+  const sec = parseInt(s.analyseRefreshSec, 10) || 0;
+  if (analyseTimer) { clearInterval(analyseTimer); analyseTimer = null; }
+  const meta = document.getElementById("analyse-meta");
+  if (sec > 0) {
+    analyseTimer = setInterval(runAnalysePair, sec * 1000);
+    meta.textContent = `auto-refresh every ${sec >= 60 ? (sec / 60) + " min" : sec + " s"}`;
+  } else {
+    meta.textContent = "manual refresh  ·  use ↻ to update";
+  }
+}
+
 /** Fire both /api/analyse calls in parallel — scene + overflies. */
 function runAnalysePair() {
   const btn = document.getElementById("analyse-btn");
+  const refresh = document.getElementById("analyse-refresh");
   btn.disabled = true;
+  refresh.classList.add("busy");
   Promise.all([
     runAnalyseSection("scene",     "#analyse-scene"),
     runAnalyseSection("overflies", "#analyse-overflies")
-  ]).finally(() => { btn.disabled = false; });
+  ]).finally(() => {
+    btn.disabled = false;
+    refresh.classList.remove("busy");
+  });
 }
 
 async function runAnalyseSection(mode, selector) {
