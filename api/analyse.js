@@ -14,7 +14,7 @@
 //
 // Requires GEMINI_API_KEY env var (same one used by /api/explain).
 
-import { callGemini } from "./_gemini.js";
+import { callLlm } from "./_llm.js";
 
 const ADSBDB_URL = "https://api.adsbdb.com/v0/callsign";
 
@@ -61,13 +61,15 @@ export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "POST only" });
   }
-  const key = process.env.GEMINI_API_KEY;
-  if (!key) {
+  const { city = "", aircraft = [], mode = "scene", llm: llmSettings = {} } = req.body || {};
+  const haveKey = !!(llmSettings.apiKey
+                  || process.env.GEMINI_API_KEY
+                  || process.env.OPENAI_API_KEY);
+  if (!haveKey) {
     return res.status(503).json({
-      error: "Analyse disabled — set GEMINI_API_KEY in Vercel env vars"
+      error: "Analyse disabled — open Settings ⚙ and add a Gemini or OpenAI API key"
     });
   }
-  const { city = "", aircraft = [], mode = "scene" } = req.body || {};
   if (!Array.isArray(aircraft) || aircraft.length === 0) {
     return res.status(400).json({ error: "no aircraft in payload" });
   }
@@ -138,7 +140,7 @@ export default async function handler(req, res) {
       ? overfliesPrompt({ city, all: aircraft, top, lines })
       : scenePrompt   ({ city, all: aircraft, top, lines });
 
-  const result = await callGemini(prompt, { key, maxTokens: 600 });
+  const result = await callLlm(prompt, llmSettings, { maxTokens: 2000 });
   if (result.error) {
     return res.status(502).json({
       error: result.error,
@@ -163,17 +165,29 @@ around ${city || "an airport"}. ${all.length} aircraft are currently
 in range. The closest ${top.length} are listed below, with airline and
 scheduled route appended where adsbdb.com could resolve them.
 
-Write a short paragraph (no headers, no preamble) describing what's
-going on in the sky right now — the dominant flow (which airlines and
-which routes are most represented, are people arriving or departing),
-any standouts (rare routes, unusual altitudes, military or business
-traffic if you can spot it from the callsign / airline), and anything
-notable.
+Write a thorough briefing on the scene. Cover, in this order:
 
-Then 3-5 bullet points on the most interesting individual flights.
-Mention each one by callsign, airline, route, and what makes it
-interesting in one short sentence. Keep the whole reply under 180 words.
-Stay factual; if you can't identify something, say so.
+  1. The dominant flow — which airlines and which routes appear most,
+     are these arrivals into ${city}, departures from it, or passing
+     through. If the picture splits clearly between low traffic and
+     high traffic, say so.
+  2. Standouts — unexpected airlines for this region, rare aircraft
+     types, atypical altitudes, anything that breaks the pattern
+     (military, head-of-state, ambulance, ferry, business jets).
+  3. Schedule context — for the routes you recognise, mention typical
+     daily frequency, where this flight sits in the day's rotation,
+     and whether it's running on time relative to a normal schedule.
+  4. Geographic flow — which direction the traffic is moving as a
+     whole; if there's a clear inbound or outbound wave, name it.
+
+Open with a one-paragraph plain-English summary, then expand the four
+points above as bullets. Follow with 5-8 bullet points on individual
+flights worth a closer look — callsign, airline, type if known, route,
+altitude, and why interesting in one or two sentences each. Bold the
+key facts. Aim for ~350 words; go longer if there's substance.
+
+Stay factual; if you can't identify something, say so plainly rather
+than guess. Don't pad. Don't repeat the prompt.
 
 Aircraft (top ${top.length} of ${all.length}):
 ${lines}`;
@@ -185,16 +199,32 @@ around ${city || "an airport"}. Below are the ${top.length} highest aircraft
 currently in range (all at or above FL250, at least 30 nm out — so almost
 certainly transit traffic rather than arrivals or departures).
 
-Write a short paragraph (no headers, no preamble) describing the
-high-altitude flow: which long-haul corridors are running overhead right
-now, which way the traffic is moving (e.g. North Atlantic westbound,
-European eastbound), which airlines dominate, and anything unusual
-(unexpected airline, rare route, very high cruise altitude).
+Write a thorough briefing on the high-altitude picture. Cover:
 
-Then 3-5 bullet points on the most striking overflies. Each: callsign,
-airline, route, why interesting (one short sentence). Keep the whole
-reply under 160 words. Stay factual; if you can't identify a route, say
-so rather than guess.
+  1. Dominant corridors — which long-haul routes are running overhead
+     right now (e.g. North Atlantic westbound, intra-European eastbound,
+     polar Asia routes). Name the named ATS routes / NAT tracks where
+     you can infer them from the bearings and origin/destination.
+  2. Flow direction — is the traffic predominantly outbound, inbound,
+     or split. If a clear wave is visible (morning trans-Atlantic
+     westbounds, evening Asia eastbounds), say so.
+  3. Operators — which airlines dominate at altitude, which alliances
+     they belong to, anything regionally unusual (e.g. a US carrier
+     deep into Europe, a low-cost in a wide-body role).
+  4. Equipment — typical aircraft types in service on these corridors;
+     mention if anything stands out (twin vs quad, very new or very old
+     variant).
+  5. Anomalies — unusual cruise altitudes, unexpected origin/destination
+     pairs, unusual operators, military / state / freighter traffic.
+
+Open with a one-paragraph plain-English summary, then expand the five
+points above as bullets. Follow with 5-8 bullet points on the most
+striking individual overflies — callsign, airline, type if known,
+route, altitude, and why interesting in one or two sentences.
+
+Bold the key facts. Aim for ~300 words; longer if there's substance.
+Stay factual; if you can't identify a route or operator, say so plainly
+rather than guess.
 
 High-altitude aircraft (top ${top.length} of ${all.length} in range):
 ${lines}`;

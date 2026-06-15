@@ -138,6 +138,137 @@
     margin-left: 4px;
   }
 
+  /* ---------- settings cog + modal ---------- */
+  .cog-btn {
+    color: var(--text-faint);
+    font-size: 18px;
+    margin-left: 8px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .cog-btn:hover { color: var(--amber); }
+  .settings-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.55);
+    z-index: 99;
+  }
+  .settings-modal {
+    position: fixed;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    width: min(560px, calc(100% - 32px));
+    max-height: calc(100vh - 60px);
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-elev);
+    border: 1px solid var(--amber);
+    border-radius: 6px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+    z-index: 100;
+    overflow: hidden;
+  }
+  .settings-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--line);
+    color: var(--amber);
+    font-size: 11px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+  }
+  .settings-close { cursor: pointer; color: var(--text-faint); padding: 0 4px; font-size: 14px; }
+  .settings-close:hover { color: var(--text); }
+  .settings-body {
+    overflow-y: auto;
+    padding: 14px 18px;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+  .settings-section { margin-bottom: 18px; }
+  .settings-section-head {
+    color: var(--text-faint);
+    font-size: 9px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+  .settings-modal label.radio {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    padding: 8px 0;
+    cursor: pointer;
+    color: var(--text-dim);
+    font-size: 12px;
+  }
+  .settings-modal label.radio b { color: var(--text); }
+  .settings-modal label.field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 10px;
+    color: var(--text-faint);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+  .settings-modal label.field input {
+    background: var(--bg);
+    border: 1px solid var(--line);
+    color: var(--text);
+    font: inherit;
+    font-size: 12px;
+    padding: 6px 10px;
+    border-radius: 3px;
+    letter-spacing: normal;
+    text-transform: none;
+  }
+  .settings-modal label.field input:focus { outline: none; border-color: var(--amber); }
+  .settings-hint {
+    color: var(--text-faint);
+    font-size: 11px;
+    line-height: 1.5;
+    margin-top: 8px;
+  }
+  .settings-hint code {
+    background: var(--bg);
+    padding: 1px 4px;
+    border-radius: 2px;
+    color: var(--text);
+    font-size: 10px;
+  }
+  .settings-foot {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 18px;
+    border-top: 1px solid var(--line);
+    background: var(--bg-elev);
+  }
+  .settings-msg { color: var(--green); font-size: 10px; flex: 1; }
+  .ghost-btn, .amber-btn {
+    background: transparent;
+    border: 1px solid var(--line);
+    color: var(--text-dim);
+    font: inherit;
+    font-size: 10px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    padding: 7px 14px;
+    border-radius: 3px;
+    cursor: pointer;
+  }
+  .ghost-btn:hover { border-color: var(--text); color: var(--text); }
+  .amber-btn {
+    border-color: var(--amber);
+    color: var(--amber);
+  }
+  .amber-btn:hover { background: rgba(255,174,26,0.1); }
+
   /* ---------- layout ---------- */
   .shell {
     display: grid;
@@ -236,7 +367,10 @@
     position: absolute;
     top: 16px; left: 50%;
     transform: translateX(-50%);
-    width: min(560px, calc(100% - 32px));
+    width: min(640px, calc(100% - 32px));
+    max-height: calc(100vh - 80px);
+    display: flex;
+    flex-direction: column;
     background: rgba(5,8,13,0.94);
     border: 1px solid var(--amber);
     border-radius: 4px;
@@ -244,6 +378,18 @@
     -webkit-backdrop-filter: blur(8px);
     z-index: 10;
     box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+    overflow: hidden;
+  }
+  .analyse-panel.fullscreen {
+    top: 12px; left: 12px;
+    width: calc(100% - 24px);
+    max-height: calc(100vh - 24px);
+    transform: none;
+  }
+  .analyse-body {
+    overflow-y: auto;
+    flex: 1 1 auto;
+    min-height: 0;
   }
   .analyse-head {
     display: flex;
@@ -264,8 +410,17 @@
     text-transform: uppercase;
     flex: 1;
   }
-  .analyse-close { cursor: pointer; color: var(--text-faint); }
-  .analyse-close:hover { color: var(--text); }
+  .analyse-close,
+  .analyse-expand {
+    cursor: pointer;
+    color: var(--text-faint);
+    padding: 0 4px;
+    font-size: 14px;
+    user-select: none;
+  }
+  .analyse-close:hover,
+  .analyse-expand:hover { color: var(--text); }
+  .analyse-panel.fullscreen .analyse-expand { color: var(--amber); }
   .analyse-section { border-top: 1px solid var(--line); }
   .analyse-section:first-of-type { border-top: none; }
   .analyse-section-head {
@@ -276,12 +431,10 @@
     text-transform: uppercase;
   }
   .analyse-text {
-    padding: 14px;
+    padding: 14px 16px;
     color: var(--text-dim);
-    font-size: 12px;
-    line-height: 1.55;
-    max-height: 60vh;
-    overflow-y: auto;
+    font-size: 12.5px;
+    line-height: 1.6;
   }
   .analyse-text p   { margin: 0 0 10px; }
   .analyse-text ul  { margin: 0 0 10px; padding-left: 18px; }
@@ -417,13 +570,15 @@
   .detail .explain-btn:disabled { opacity: 0.5; cursor: default; }
   .detail .explain-text {
     margin-top: 10px;
-    padding: 10px 12px;
+    padding: 12px 14px;
     background: var(--bg);
     border-left: 2px solid var(--amber);
     color: var(--text-dim);
-    font-size: 11px;
-    line-height: 1.55;
+    font-size: 12px;
+    line-height: 1.6;
     border-radius: 2px;
+    max-height: 60vh;
+    overflow-y: auto;
   }
   .detail .explain-text p  { margin: 0 0 8px; }
   .detail .explain-text ul { margin: 0 0 8px; padding-left: 16px; }
@@ -466,6 +621,83 @@
     <span class="custom-msg" id="custom-msg"></span>
   </span>
   <span class="sub">data via <a href="https://adsb.fi" style="color:var(--text-dim)">adsb.fi</a> — community ADS-B aggregator</span>
+  <span class="cog-btn" id="cog-btn" title="Settings (API keys, LLM provider)">⚙</span>
+</div>
+
+<!-- ============ Settings modal ============ -->
+<div class="settings-backdrop" id="settings-backdrop" style="display:none;"></div>
+<div class="settings-modal" id="settings-modal" style="display:none;">
+  <div class="settings-head">
+    <span>Settings</span>
+    <span class="settings-close" id="settings-close" title="Close">✕</span>
+  </div>
+  <div class="settings-body">
+    <div class="settings-section">
+      <div class="settings-section-head">LLM provider</div>
+      <label class="radio">
+        <input type="radio" name="settings-provider" value="gemini">
+        <span><b>Gemini</b>  ·  Google AI Studio</span>
+      </label>
+      <label class="radio">
+        <input type="radio" name="settings-provider" value="openai">
+        <span><b>OpenAI</b>  ·  also works with Ollama, LM Studio, OpenRouter</span>
+      </label>
+    </div>
+
+    <div class="settings-section">
+      <div class="settings-section-head">Gemini</div>
+      <label class="field">
+        <span>API key</span>
+        <input type="password" id="settings-gemini-key"
+               placeholder="paste from aistudio.google.com/apikey"
+               autocomplete="off" spellcheck="false">
+      </label>
+      <label class="field">
+        <span>Model</span>
+        <input type="text" id="settings-gemini-model"
+               placeholder="gemini-2.5-flash-lite"
+               autocomplete="off" spellcheck="false">
+      </label>
+    </div>
+
+    <div class="settings-section">
+      <div class="settings-section-head">OpenAI  (or compatible)</div>
+      <label class="field">
+        <span>API key</span>
+        <input type="password" id="settings-openai-key"
+               placeholder="sk-... or any token your server accepts"
+               autocomplete="off" spellcheck="false">
+      </label>
+      <label class="field">
+        <span>Base URL</span>
+        <input type="text" id="settings-openai-url"
+               placeholder="https://api.openai.com/v1"
+               autocomplete="off" spellcheck="false">
+      </label>
+      <label class="field">
+        <span>Model</span>
+        <input type="text" id="settings-openai-model"
+               placeholder="gpt-4o-mini"
+               autocomplete="off" spellcheck="false">
+      </label>
+      <div class="settings-hint">
+        For Ollama set Base URL to <code>http://your-host:11434/v1</code> and Model to e.g. <code>llama3.1:8b</code>. Note: Vercel can't reach <code>localhost</code> — for local LLMs you need a publicly-reachable host or tunnel.
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <div class="settings-section-head">Storage</div>
+      <div class="settings-hint">
+        Keys live in your browser's localStorage. They're sent only to the Overhead serverless function, which forwards them to your chosen LLM provider. Nothing is logged or stored on the server. Clear with the button below.
+      </div>
+      <button type="button" class="ghost-btn" id="settings-clear">Clear all stored settings</button>
+    </div>
+  </div>
+  <div class="settings-foot">
+    <span class="settings-msg" id="settings-msg"></span>
+    <button type="button" class="ghost-btn" id="settings-cancel">Cancel</button>
+    <button type="button" class="amber-btn" id="settings-save">Save &amp; close</button>
+  </div>
 </div>
 
 <div class="shell">
@@ -497,17 +729,20 @@
       <div class="analyse-head">
         <span>Your sky  ·  live read</span>
         <span class="analyse-meta" id="analyse-meta">refreshing every 30 s</span>
-        <span class="analyse-close" id="analyse-close">✕</span>
+        <span class="analyse-expand" id="analyse-expand" title="Expand to fullscreen">⤢</span>
+        <span class="analyse-close" id="analyse-close" title="Close">✕</span>
       </div>
 
-      <div class="analyse-section">
-        <div class="analyse-section-head">Scene  ·  what's flying right now</div>
-        <div class="analyse-text" id="analyse-scene">Asking the LLM…</div>
-      </div>
+      <div class="analyse-body">
+        <div class="analyse-section">
+          <div class="analyse-section-head">Scene  ·  what's flying right now</div>
+          <div class="analyse-text" id="analyse-scene">Asking the LLM…</div>
+        </div>
 
-      <div class="analyse-section">
-        <div class="analyse-section-head">High-altitude overflies  ·  FL250 and up</div>
-        <div class="analyse-text" id="analyse-overflies">Asking the LLM…</div>
+        <div class="analyse-section">
+          <div class="analyse-section-head">High-altitude overflies  ·  FL250 and up</div>
+          <div class="analyse-text" id="analyse-overflies">Asking the LLM…</div>
+        </div>
       </div>
     </div>
   </div>
@@ -594,6 +829,42 @@ const customCentreReady = customCode
     : Promise.resolve();
 
 const $ = sel => document.querySelector(sel);
+
+// ---------- settings (LLM provider, keys, models) ----------
+const SETTINGS_KEY = "overhead-settings-v1";
+const SETTINGS_DEFAULTS = {
+  provider: "gemini",
+  geminiKey: "",
+  geminiModel: "",
+  openaiKey: "",
+  openaiUrl: "",
+  openaiModel: ""
+};
+function loadSettings() {
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    return raw ? { ...SETTINGS_DEFAULTS, ...JSON.parse(raw) } : { ...SETTINGS_DEFAULTS };
+  } catch { return { ...SETTINGS_DEFAULTS }; }
+}
+function saveSettings(s) {
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
+}
+/** Shape sent to the server with every LLM call. Picks the active
+ *  provider's key + model. Empty fields are dropped so the server falls
+ *  back to its env-var defaults. */
+function llmPayload() {
+  const s = loadSettings();
+  const out = { provider: s.provider };
+  if (s.provider === "openai") {
+    if (s.openaiKey)   out.apiKey  = s.openaiKey;
+    if (s.openaiUrl)   out.baseUrl = s.openaiUrl;
+    if (s.openaiModel) out.model   = s.openaiModel;
+  } else {
+    if (s.geminiKey)   out.apiKey = s.geminiKey;
+    if (s.geminiModel) out.model  = s.geminiModel;
+  }
+  return out;
+}
 
 /** Render a tiny, safe subset of markdown — paragraphs, bullets (* or -),
  *  bold (**…**) and italic (*…*) — into HTML. All HTML in the source is
@@ -1061,7 +1332,8 @@ async function runExplain(ac, card) {
       lat: ac.lat, lon: ac.lon,
       altFt: ac.alt_baro,
       gsKt: ac.gs,
-      trkDeg: ac.track
+      trkDeg: ac.track,
+      llm: llmPayload()
     };
     const r = await fetch("/api/explain", {
       method: "POST",
@@ -1085,12 +1357,64 @@ async function runExplain(ac, card) {
   }
 }
 
+// ---------- settings modal wiring ----------
+function openSettings() {
+  const s = loadSettings();
+  // Reflect current values into form
+  document.querySelectorAll('input[name="settings-provider"]').forEach(r => {
+    r.checked = (r.value === s.provider);
+  });
+  $("#settings-gemini-key").value   = s.geminiKey   || "";
+  $("#settings-gemini-model").value = s.geminiModel || "";
+  $("#settings-openai-key").value   = s.openaiKey   || "";
+  $("#settings-openai-url").value   = s.openaiUrl   || "";
+  $("#settings-openai-model").value = s.openaiModel || "";
+  $("#settings-msg").textContent    = "";
+  $("#settings-backdrop").style.display = "";
+  $("#settings-modal").style.display = "";
+}
+function closeSettings() {
+  $("#settings-backdrop").style.display = "none";
+  $("#settings-modal").style.display = "none";
+}
+function commitSettings() {
+  const provider = (document.querySelector('input[name="settings-provider"]:checked') || {}).value || "gemini";
+  const s = {
+    provider,
+    geminiKey:   $("#settings-gemini-key").value.trim(),
+    geminiModel: $("#settings-gemini-model").value.trim(),
+    openaiKey:   $("#settings-openai-key").value.trim(),
+    openaiUrl:   $("#settings-openai-url").value.trim(),
+    openaiModel: $("#settings-openai-model").value.trim()
+  };
+  saveSettings(s);
+  const msg = $("#settings-msg");
+  msg.style.color = "var(--green)";
+  msg.textContent = "saved";
+  setTimeout(closeSettings, 400);
+}
+function clearSettings() {
+  if (!confirm("Clear all stored LLM settings?")) return;
+  localStorage.removeItem(SETTINGS_KEY);
+  openSettings();   // re-open with defaults
+}
+
+document.getElementById("cog-btn").addEventListener("click", openSettings);
+document.getElementById("settings-close").addEventListener("click", closeSettings);
+document.getElementById("settings-cancel").addEventListener("click", closeSettings);
+document.getElementById("settings-backdrop").addEventListener("click", closeSettings);
+document.getElementById("settings-save").addEventListener("click", commitSettings);
+document.getElementById("settings-clear").addEventListener("click", clearSettings);
+
 // ---------- Analyse the sky (two sections, 30s refresh) ----------
 const ANALYSE_REFRESH_MS = 30000;
 let analyseTimer = null;
 
 document.getElementById("analyse-btn").addEventListener("click", openAnalyse);
 document.getElementById("analyse-close").addEventListener("click", closeAnalyse);
+document.getElementById("analyse-expand").addEventListener("click", () => {
+  document.getElementById("analyse-panel").classList.toggle("fullscreen");
+});
 
 function openAnalyse() {
   document.getElementById("analyse-panel").style.display = "";
@@ -1130,6 +1454,7 @@ async function runAnalyseSection(mode, selector) {
     const payload = {
       city: CENTRE.name,
       mode,
+      llm: llmPayload(),
       aircraft: aircraft.map(a => ({
         hex: a.hex,
         flight: a.flight,

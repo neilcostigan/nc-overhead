@@ -12,7 +12,7 @@
 // Settings → Environment Variables). Without the key, returns a 503 so the
 // UI can show a friendly "Explain disabled" badge.
 
-import { callGemini } from "./_gemini.js";
+import { callLlm } from "./_llm.js";
 
 // Cache identical questions for an hour so spam-clicks don't burn quota.
 const CACHE_MS = 60 * 60 * 1000;
@@ -22,15 +22,19 @@ export default async function handler(req, res) {
   if (req.method !== "POST" && req.method !== "GET") {
     return res.status(405).json({ error: "POST or GET" });
   }
-  const key = process.env.GEMINI_API_KEY;
-  if (!key) {
-    return res.status(503).json({
-      error: "Explain disabled — set GEMINI_API_KEY in Vercel env vars"
-    });
-  }
-
   // Accept payload from JSON body (POST) or query (GET).
   const src = req.method === "POST" ? (req.body || {}) : req.query;
+  // User-supplied LLM settings (from the settings dialog, stored client-side).
+  const llmSettings = (src.llm && typeof src.llm === "object") ? src.llm : {};
+  // No keys at all (neither user-supplied nor env) → don't even bother building the prompt.
+  const haveKey = !!(llmSettings.apiKey
+                  || process.env.GEMINI_API_KEY
+                  || process.env.OPENAI_API_KEY);
+  if (!haveKey) {
+    return res.status(503).json({
+      error: "Explain disabled — open Settings ⚙ and add a Gemini or OpenAI API key"
+    });
+  }
   const hex = (src.hex || "").toString().trim().toLowerCase();
   if (!/^[0-9a-f]{6}$/.test(hex)) {
     return res.status(400).json({ error: "hex must be 6 hex chars" });
@@ -67,7 +71,7 @@ export default async function handler(req, res) {
     route: routeInfo.status === "fulfilled" ? routeInfo.value : null
   });
 
-  const result = await callGemini(prompt, { key, maxTokens: 500 });
+  const result = await callLlm(prompt, llmSettings, { maxTokens: 1800 });
   if (result.error) {
     return res.status(502).json({
       error: result.error,
@@ -108,10 +112,25 @@ function buildPrompt(p) {
   return [
     "You are an aviation assistant for a user watching live ADS-B traffic",
     "over a chosen city. Below are the facts we have about one aircraft.",
-    "Write one short paragraph and three bullet points explaining who it",
-    "is, what it's doing, and anything notable. Stay factual — corroborate",
-    "what's listed, do not invent. If you cannot tell, say so plainly.",
-    "Keep the whole reply under 120 words.",
+    "Write a detailed brief covering:",
+    "",
+    "  1. WHO  — the operator (parent group, hub bases, fleet character),",
+    "          plus airline traditions or quirks if relevant.",
+    "  2. WHAT — the aircraft type (variant, typical role, configuration",
+    "          for this operator, age range, fleet size if known).",
+    "  3. WHERE — origin and destination cities and airports, the corridor",
+    "          (e.g. North Atlantic, intra-Europe shuttle), great-circle",
+    "          distance and approximate block time. If it's a transit",
+    "          rather than a destination flight, say so.",
+    "  4. CONTEXT — altitude / speed and what they imply about phase of",
+    "          flight, any notable callsign patterns, anything unusual",
+    "          for this aircraft / airline / route pair.",
+    "",
+    "Open with a one-paragraph plain-English summary, then expand the",
+    "above as a bullet list with a short label per point. Bold the key",
+    "facts. Aim for ~300 words; more if there's substance. Stay factual —",
+    "corroborate what's listed, do not invent. If a field is unknown,",
+    "say so plainly rather than guess.",
     "",
     "Facts:",
     ...facts
