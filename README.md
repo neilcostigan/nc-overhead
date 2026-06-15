@@ -12,7 +12,7 @@ aggregator.
 ## Layout
 
 ```
-web-online/
+overhead-nc/
 ├── index.html              static page
 ├── api/
 │   └── aircraft.json.js    Vercel Node serverless function
@@ -24,7 +24,7 @@ web-online/
 ## Run locally
 
 ```sh
-cd web-online
+cd overhead-nc
 npm i -g vercel              # one-time
 vercel dev                   # serves on http://localhost:3000
 ```
@@ -32,22 +32,22 @@ vercel dev                   # serves on http://localhost:3000
 ## Deploy to Vercel — direct
 
 ```sh
-cd web-online
+cd overhead-nc
 vercel               # first-run prompts you to link or create a project
 vercel --prod        # subsequent prod deploys
 ```
 
 ## Deploy via GitHub (recommended for auto-deploy)
 
-1. Create a repo on GitHub, e.g. `lnrsflightsense-online`.
-2. From inside `web-online/`:
+1. Create a repo on GitHub, e.g. `overhead-nc`.
+2. From inside `overhead-nc/`:
 
    ```sh
    git init
    git add .
    git commit -m "initial commit"
    git branch -M main
-   git remote add origin git@github.com:<you>/lnrsflightsense-online.git
+   git remote add origin git@github.com:<you>/overhead-nc.git
    git push -u origin main
    ```
 
