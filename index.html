@@ -246,8 +246,25 @@
     text-transform: uppercase;
     color: var(--amber);
   }
+  .analyse-meta {
+    margin-left: 14px;
+    color: var(--text-faint);
+    font-size: 9px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    flex: 1;
+  }
   .analyse-close { cursor: pointer; color: var(--text-faint); }
   .analyse-close:hover { color: var(--text); }
+  .analyse-section { border-top: 1px solid var(--line); }
+  .analyse-section:first-of-type { border-top: none; }
+  .analyse-section-head {
+    padding: 8px 14px 4px;
+    color: var(--amber);
+    font-size: 9px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+  }
   .analyse-text {
     padding: 14px;
     color: var(--text-dim);
@@ -468,10 +485,20 @@
     </div>
     <div id="analyse-panel" class="analyse-panel" style="display:none;">
       <div class="analyse-head">
-        <span>What's flying right now</span>
+        <span>Your sky  ·  live read</span>
+        <span class="analyse-meta" id="analyse-meta">refreshing every 30 s</span>
         <span class="analyse-close" id="analyse-close">✕</span>
       </div>
-      <div class="analyse-text" id="analyse-text">Asking the LLM…</div>
+
+      <div class="analyse-section">
+        <div class="analyse-section-head">Scene  ·  what's flying right now</div>
+        <div class="analyse-text" id="analyse-scene">Asking the LLM…</div>
+      </div>
+
+      <div class="analyse-section">
+        <div class="analyse-section-head">High-altitude overflies  ·  FL250 and up</div>
+        <div class="analyse-text" id="analyse-overflies">Asking the LLM…</div>
+      </div>
     </div>
   </div>
 
@@ -1048,23 +1075,51 @@ async function runExplain(ac, card) {
   }
 }
 
-// ---------- Analyse the sky ----------
-document.getElementById("analyse-btn").addEventListener("click", runAnalyse);
-document.getElementById("analyse-close").addEventListener("click", () => {
-  document.getElementById("analyse-panel").style.display = "none";
-});
+// ---------- Analyse the sky (two sections, 30s refresh) ----------
+const ANALYSE_REFRESH_MS = 30000;
+let analyseTimer = null;
 
-async function runAnalyse() {
+document.getElementById("analyse-btn").addEventListener("click", openAnalyse);
+document.getElementById("analyse-close").addEventListener("click", closeAnalyse);
+
+function openAnalyse() {
+  document.getElementById("analyse-panel").style.display = "";
+  runAnalysePair();
+  if (analyseTimer) clearInterval(analyseTimer);
+  analyseTimer = setInterval(runAnalysePair, ANALYSE_REFRESH_MS);
+}
+
+function closeAnalyse() {
+  document.getElementById("analyse-panel").style.display = "none";
+  if (analyseTimer) { clearInterval(analyseTimer); analyseTimer = null; }
+}
+
+/** Fire both /api/analyse calls in parallel — scene + overflies. */
+function runAnalysePair() {
   const btn = document.getElementById("analyse-btn");
-  const panel = document.getElementById("analyse-panel");
-  const out = document.getElementById("analyse-text");
-  panel.style.display = "";
-  out.className = "analyse-text loading";
-  out.textContent = "Asking the LLM about what's in your sky…";
   btn.disabled = true;
+  Promise.all([
+    runAnalyseSection("scene",     "#analyse-scene"),
+    runAnalyseSection("overflies", "#analyse-overflies")
+  ]).finally(() => { btn.disabled = false; });
+}
+
+async function runAnalyseSection(mode, selector) {
+  const out = document.querySelector(selector);
+  // Only mark loading if it's still showing the original prompt — keeps
+  // the previous response visible during background refreshes so the
+  // panel doesn't flicker.
+  if (out.textContent.startsWith("Asking the LLM")
+      || out.className.includes("error")) {
+    out.className = "analyse-text loading";
+    out.textContent = mode === "overflies"
+        ? "Looking at high-altitude transit traffic…"
+        : "Asking the LLM about what's flying right now…";
+  }
   try {
     const payload = {
       city: CENTRE.name,
+      mode,
       aircraft: aircraft.map(a => ({
         hex: a.hex,
         flight: a.flight,
@@ -1085,20 +1140,18 @@ async function runAnalyse() {
     if (!r.ok) {
       out.className = "analyse-text error";
       out.textContent = d.error || ("HTTP " + r.status);
-    } else {
-      out.className = "analyse-text";
-      out.innerHTML = mdToHtml(d.text)
-          + (d.model
-              ? `<span class="model-tag">model: ${d.model}${
-                  d.enriched != null ? `  ·  ${d.enriched} routes resolved` : ""
-                }</span>`
-              : "");
+      return;
     }
+    out.className = "analyse-text";
+    out.innerHTML = mdToHtml(d.text)
+        + (d.model
+            ? `<span class="model-tag">model: ${d.model}${
+                d.enriched != null ? `  ·  ${d.enriched} routes resolved` : ""
+              }</span>`
+            : "");
   } catch (e) {
     out.className = "analyse-text error";
     out.textContent = String(e);
-  } finally {
-    btn.disabled = false;
   }
 }
 

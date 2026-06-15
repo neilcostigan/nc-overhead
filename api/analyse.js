@@ -67,14 +67,36 @@ export default async function handler(req, res) {
       error: "Analyse disabled — set GEMINI_API_KEY in Vercel env vars"
     });
   }
-  const { city = "", aircraft = [] } = req.body || {};
+  const { city = "", aircraft = [], mode = "scene" } = req.body || {};
   if (!Array.isArray(aircraft) || aircraft.length === 0) {
     return res.status(400).json({ error: "no aircraft in payload" });
   }
 
-  // Cache key: city + first-30 hexes fingerprint.
-  const fp = aircraft.slice(0, 30).map(a => a.hex || "").sort().join(",");
-  const ckey = city + "|" + fp.slice(0, 200);
+  // Mode-specific aircraft selection.
+  //   scene     — closest 25 (mix of arrivals, departures, transits)
+  //   overflies — high & far: alt ≥ 25 000 ft AND dist ≥ 30 nm, top 25 by alt
+  let candidates;
+  if (mode === "overflies") {
+    candidates = aircraft
+      .filter(a => typeof a.alt_baro === "number" && a.alt_baro >= 25000)
+      .filter(a => typeof a.distNm === "number" && a.distNm >= 30)
+      .sort((a, b) => (b.alt_baro || 0) - (a.alt_baro || 0));
+  } else {
+    candidates = aircraft.slice(); // already sorted by distance in the client
+  }
+  if (candidates.length === 0) {
+    return res.status(200).json({
+      text: mode === "overflies"
+          ? "_Nothing high overhead right now — no aircraft above FL250 in range._"
+          : "_No aircraft visible to summarise._",
+      model: null,
+      enriched: 0
+    });
+  }
+
+  // Cache key includes mode so the two views don't collide.
+  const fp = candidates.slice(0, 30).map(a => a.hex || "").sort().join(",");
+  const ckey = mode + "|" + city + "|" + fp.slice(0, 200);
   const now = Date.now();
   const hit = cache.get(ckey);
   if (hit && now - hit.ts < CACHE_MS) {
@@ -85,7 +107,7 @@ export default async function handler(req, res) {
   // Enrich the top 25 with route + airline in parallel. Each lookup hits
   // adsbdb.com (free, no auth). 25 is a balance: covers the user's
   // interesting set without making adsbdb angry.
-  const top = aircraft.slice(0, 25);
+  const top = candidates.slice(0, 25);
   const routes = await Promise.allSettled(top.map(a => fetchRoute(a.flight)));
   let enrichedCount = 0;
 
@@ -112,26 +134,9 @@ export default async function handler(req, res) {
     return `  ${cs.padEnd(10)}  ${(a.hex||"").padEnd(7)}  alt ${alt}  spd ${spd}  trk ${trk}  dist ${dist}${suffix}`;
   }).join("\n");
 
-  const prompt =
-`You are an aviation assistant. The user is watching live ADS-B traffic
-around ${city || "an airport"}. ${aircraft.length} aircraft are currently
-in range. The closest ${top.length} are listed below, with airline and
-scheduled route appended where adsbdb.com could resolve them.
-
-Write a short paragraph (no headers, no preamble) describing what's
-going on in the sky right now — the dominant flow (which airlines and
-which routes are most represented, are people arriving or departing),
-any standouts (rare routes, unusual altitudes, military or business
-traffic if you can spot it from the callsign / airline), and anything
-notable.
-
-Then 3-5 bullet points on the most interesting individual flights.
-Mention each one by callsign, airline, route, and what makes it
-interesting in one short sentence. Keep the whole reply under 180 words.
-Stay factual; if you can't identify something, say so.
-
-Aircraft (top ${top.length} of ${aircraft.length}):
-${lines}`;
+  const prompt = mode === "overflies"
+      ? overfliesPrompt({ city, all: aircraft, top, lines })
+      : scenePrompt   ({ city, all: aircraft, top, lines });
 
   const result = await callGemini(prompt, { key, maxTokens: 600 });
   if (result.error) {
@@ -150,4 +155,47 @@ ${lines}`;
     model: result.model,
     enriched: enrichedCount
   });
+}
+
+function scenePrompt({ city, all, top, lines }) {
+  return `You are an aviation assistant. The user is watching live ADS-B traffic
+around ${city || "an airport"}. ${all.length} aircraft are currently
+in range. The closest ${top.length} are listed below, with airline and
+scheduled route appended where adsbdb.com could resolve them.
+
+Write a short paragraph (no headers, no preamble) describing what's
+going on in the sky right now — the dominant flow (which airlines and
+which routes are most represented, are people arriving or departing),
+any standouts (rare routes, unusual altitudes, military or business
+traffic if you can spot it from the callsign / airline), and anything
+notable.
+
+Then 3-5 bullet points on the most interesting individual flights.
+Mention each one by callsign, airline, route, and what makes it
+interesting in one short sentence. Keep the whole reply under 180 words.
+Stay factual; if you can't identify something, say so.
+
+Aircraft (top ${top.length} of ${all.length}):
+${lines}`;
+}
+
+function overfliesPrompt({ city, all, top, lines }) {
+  return `You are an aviation assistant. The user is watching live ADS-B traffic
+around ${city || "an airport"}. Below are the ${top.length} highest aircraft
+currently in range (all at or above FL250, at least 30 nm out — so almost
+certainly transit traffic rather than arrivals or departures).
+
+Write a short paragraph (no headers, no preamble) describing the
+high-altitude flow: which long-haul corridors are running overhead right
+now, which way the traffic is moving (e.g. North Atlantic westbound,
+European eastbound), which airlines dominate, and anything unusual
+(unexpected airline, rare route, very high cruise altitude).
+
+Then 3-5 bullet points on the most striking overflies. Each: callsign,
+airline, route, why interesting (one short sentence). Keep the whole
+reply under 160 words. Stay factual; if you can't identify a route, say
+so rather than guess.
+
+High-altitude aircraft (top ${top.length} of ${all.length} in range):
+${lines}`;
 }
