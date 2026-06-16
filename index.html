@@ -275,19 +275,19 @@
   /* Hidden on screen; only renders on the print page. Filled in by JS
    * just before window.print() so the header carries the aircraft
    * details into the PDF. */
-  #print-header {
+  #print-header, #print-sections {
     display: none;
   }
   @media print {
     /* Reset to paper. */
     html, body { background: #ffffff !important; color: #111 !important; height: auto !important; overflow: visible !important; font-size: 11pt; }
     body * { visibility: hidden !important; }
-    /* Show only the print header + the active explain text + their children. */
+    /* Show the print header + the staged sections. */
     #print-header, #print-header *,
-    .detail .explain-text:not(.loading):not(.error),
-    .detail .explain-text:not(.loading):not(.error) * {
+    #print-sections, #print-sections * {
       visibility: visible !important;
     }
+    #print-sections { display: block !important; }
     #print-header {
       display: block !important;
       visibility: visible !important;
@@ -317,38 +317,47 @@
       letter-spacing: 0.1em;
       font-size: 8pt;
     }
-    /* The briefing itself, repositioned to fill the page. */
-    .detail .explain-text {
-      position: absolute !important;
-      top: 0 !important;
-      left: 0 !important;
+    /* Staged sections — serif body for paper. */
+    #print-sections {
+      position: relative !important;
       width: 100% !important;
-      max-height: none !important;
-      overflow: visible !important;
       background: #ffffff !important;
       color: #111 !important;
-      border: none !important;
-      padding: 0 !important;
-      margin: 0 !important;
       font-family: ui-serif, Georgia, "Times New Roman", serif !important;
       font-size: 11pt !important;
       line-height: 1.55 !important;
     }
-    .detail .explain-text p { color: #111 !important; margin: 0 0 8pt; }
-    .detail .explain-text b { color: #000 !important; }
-    .detail .explain-text p:has(> b:first-child) {
+    #print-sections h2 {
+      font-family: ui-sans-serif, system-ui, Helvetica, Arial, sans-serif !important;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-size: 11pt;
+      color: #000 !important;
+      margin: 18pt 0 8pt;
+      border-bottom: 0.5pt solid #ccc;
+      padding-bottom: 4pt;
+    }
+    #print-sections p { color: #111 !important; margin: 0 0 8pt; }
+    #print-sections b { color: #000 !important; }
+    #print-sections p:has(> b:first-child) {
       margin-top: 12pt;
       color: #000 !important;
     }
-    .detail .explain-text p:has(> b:first-child) b {
+    #print-sections p:has(> b:first-child) b {
       color: #000 !important;
       font-size: 10pt !important;
       letter-spacing: 0.1em;
+      text-transform: uppercase;
     }
-    .detail .explain-text .model-tag {
+    #print-sections ul { padding-left: 20pt; margin: 0 0 8pt; }
+    #print-sections li { margin-bottom: 3pt; }
+    #print-sections .model-tag {
+      display: block;
       color: #666 !important;
       border-top: 1pt solid #ccc !important;
       font-size: 8pt !important;
+      margin-top: 12pt;
+      padding-top: 4pt;
     }
     @page { margin: 16mm 18mm; }
   }
@@ -538,16 +547,19 @@
   }
   .analyse-close,
   .analyse-expand,
-  .analyse-refresh {
+  .analyse-refresh,
+  .analyse-save {
     cursor: pointer;
     color: var(--text-faint);
     padding: 0 4px;
     font-size: 14px;
     user-select: none;
   }
+  .analyse-save { font-size: 12px; letter-spacing: -0.02em; }
   .analyse-close:hover,
   .analyse-expand:hover,
-  .analyse-refresh:hover { color: var(--amber); }
+  .analyse-refresh:hover,
+  .analyse-save:hover { color: var(--amber); }
   .analyse-refresh.busy {
     opacity: 0.4;
     pointer-events: none;
@@ -768,12 +780,13 @@
   <span class="cog-btn" id="cog-btn" title="Settings (API keys, LLM provider)">⚙</span>
 </div>
 
-<!-- ============ Print-only header (populated just before window.print) ============ -->
+<!-- ============ Print-only host (populated just before window.print) ============ -->
 <div id="print-header" aria-hidden="true">
   <div class="title" id="print-title">—</div>
   <div class="sub" id="print-sub">Aircraft briefing</div>
   <div class="meta" id="print-meta"></div>
 </div>
+<div id="print-sections" aria-hidden="true"></div>
 
 <!-- ============ Settings modal ============ -->
 <div class="settings-backdrop" id="settings-backdrop" style="display:none;"></div>
@@ -925,9 +938,12 @@
       <div class="analyse-head">
         <span>Your sky  ·  live read</span>
         <span class="analyse-meta" id="analyse-meta">manual refresh</span>
+        <span class="analyse-save" data-save="pdf"  id="analyse-save-pdf"  title="Save as PDF">📄</span>
+        <span class="analyse-save" data-save="html" id="analyse-save-html" title="Download HTML">⬇H</span>
+        <span class="analyse-save" data-save="md"   id="analyse-save-md"   title="Download Markdown">⬇M</span>
         <span class="analyse-refresh" id="analyse-refresh" title="Refresh now">↻</span>
-        <span class="analyse-expand" id="analyse-expand" title="Expand to fullscreen">⤢</span>
-        <span class="analyse-close" id="analyse-close" title="Close">✕</span>
+        <span class="analyse-expand"  id="analyse-expand"  title="Expand to fullscreen">⤢</span>
+        <span class="analyse-close"   id="analyse-close"   title="Close">✕</span>
       </div>
 
       <div class="analyse-body">
@@ -1510,7 +1526,11 @@ function renderDetail() {
       <div class="k">route</div>        <div class="v" data-route>${cs ? "loading…" : "—"}</div>
     </div>
     <button class="explain-btn" data-explain>Explain  ✦</button>
-    <button class="explain-btn" data-print title="Print or save as PDF — opens system print dialog">📄  Save as PDF</button>
+    <span class="save-as">
+      <button class="explain-btn" data-save="pdf"  title="Open the print dialog (Save as PDF)">📄  PDF</button>
+      <button class="explain-btn" data-save="html" title="Download a standalone HTML file">⬇  HTML</button>
+      <button class="explain-btn" data-save="md"   title="Download a Markdown file">⬇  MD</button>
+    </span>
     <div class="explain-text" style="display:none" data-explain-out></div>
   `;
   row.insertAdjacentElement("afterend", card);
@@ -1519,42 +1539,161 @@ function renderDetail() {
   restoreExplain(ac.hex);
   card.querySelector("[data-explain]").addEventListener("click", () =>
       runExplain(ac, card));
-  card.querySelector("[data-print]").addEventListener("click", () =>
-      printExplain(ac));
+  card.querySelectorAll("[data-save]").forEach(b =>
+      b.addEventListener("click", () => saveExplain(ac, b.dataset.save)));
 }
 
-/** Fill the print-only header with details about this aircraft + invoke
- *  the browser print dialog. The print stylesheet hides everything else
- *  and stretches the briefing across the page. */
-function printExplain(ac) {
+/** Save the rendered Explain briefing in one of three formats. */
+function saveExplain(ac, format) {
   const st = cardState.get(ac.hex) || {};
   if (!st.explain) {
     alert("Click Explain ✦ first — there's no briefing to save yet.");
     return;
   }
   const cs = (ac.flight || "").trim() || ac.hex.toUpperCase();
-  const info  = st.info  || {};
-  const route = st.route || "";
-  $("#print-title").textContent =
-      `${cs}  ·  ${(ac.hex || "").toUpperCase()}`;
-  $("#print-sub").textContent =
-      `Aircraft briefing  ·  Overhead — ${CENTRE.name}  ·  ${new Date().toLocaleString()}`;
-  const rows = [
+  const info = st.info || {};
+  const meta = [
     ["Callsign",     cs],
     ["ICAO24",       (ac.hex || "").toUpperCase()],
     ["Registration", info.registration && info.registration !== "—" ? info.registration : "—"],
     ["Type",         info.type         && info.type         !== "—" ? info.type         : "—"],
     ["Operator",     info.operator     && info.operator     !== "—" ? info.operator     : "—"],
-    ["Route",        route || "—"],
-    ["Source",       "adsb.fi  ·  hexdb.io  ·  adsbdb.com"],
+    ["Route",        st.route || "—"],
+    ["Sources",      "adsb.fi  ·  hexdb.io  ·  adsbdb.com"],
     ["Model",        st.explain.model || "—"],
     ["Generated",    new Date().toISOString()]
   ];
-  $("#print-meta").innerHTML = rows
+  const title = `${cs}  ·  ${(ac.hex || "").toUpperCase()}`;
+  const subtitle = `Aircraft briefing  ·  Overhead — ${CENTRE.name}  ·  ${new Date().toLocaleString()}`;
+  const safeName = (cs.replace(/[^A-Z0-9]/gi, "_") || "aircraft") + "_briefing";
+
+  switch (format) {
+    case "pdf":  return printDocument({ title, subtitle, meta, sections: [{ heading: null, text: st.explain.text }], mode: "explain" });
+    case "html": return downloadBlob(buildHtmlDoc({ title, subtitle, meta, sections: [{ heading: null, text: st.explain.text }] }), `${safeName}.html`, "text/html");
+    case "md":   return downloadBlob(buildMarkdownDoc({ title, subtitle, meta, sections: [{ heading: null, text: st.explain.text }] }), `${safeName}.md`, "text/markdown");
+  }
+}
+
+/** Save the current Analyse panel (Scene + Overflies) in one of three formats. */
+function saveAnalyse(format) {
+  const scene = analyseState.scene;
+  const overflies = analyseState.overflies;
+  if (!scene && !overflies) {
+    alert("Run the Analyse panel at least once before saving.");
+    return;
+  }
+  const sections = [];
+  if (scene)     sections.push({ heading: "Scene — what's flying right now",  text: scene.text });
+  if (overflies) sections.push({ heading: "High-altitude overflies — FL250 and up", text: overflies.text });
+
+  const meta = [
+    ["Centre",     CENTRE.name],
+    ["Position",   `${CENTRE.lat.toFixed(3)}, ${CENTRE.lon.toFixed(3)}`],
+    ["Radius",     `${RADIUS_NM} nm`],
+    ["In range",   aircraft.length + " aircraft"],
+    ["Sources",    "adsb.fi  ·  adsbdb.com"],
+    ["Model",      (scene && scene.model) || (overflies && overflies.model) || "—"],
+    ["Enriched",   `${scene?.enriched ?? 0} / ${overflies?.enriched ?? 0} (scene / overflies)`],
+    ["Generated",  new Date().toISOString()]
+  ];
+  const title = `Sky briefing  ·  ${CENTRE.name}`;
+  const subtitle = new Date().toLocaleString();
+  const safeName = `sky_${(CENTRE.iata || "centre").replace(/\W/g,"_")}_${ymdhm()}`;
+
+  switch (format) {
+    case "pdf":  return printDocument({ title, subtitle, meta, sections, mode: "analyse" });
+    case "html": return downloadBlob(buildHtmlDoc({ title, subtitle, meta, sections }), `${safeName}.html`, "text/html");
+    case "md":   return downloadBlob(buildMarkdownDoc({ title, subtitle, meta, sections }), `${safeName}.md`, "text/markdown");
+  }
+}
+
+/** Common print path. Fills the hidden print header, sets a body class so
+ *  the @media print rules target the right panel, and fires the dialog. */
+function printDocument({ title, subtitle, meta, sections, mode }) {
+  $("#print-title").textContent = title;
+  $("#print-sub").textContent   = subtitle;
+  $("#print-meta").innerHTML = meta
       .map(([k, v]) => `<div class="k">${k}</div><div class="v">${escapeHtml(v)}</div>`)
       .join("");
-  // setTimeout ensures the DOM updates before the print dialog snapshots.
-  setTimeout(() => window.print(), 50);
+  // Stage the section bodies inside the print-only host so they show
+  // even when the live cards aren't on screen (e.g. printing analyse
+  // while the panel is open but scrolled, or when no card is mounted).
+  const host = document.getElementById("print-sections");
+  host.innerHTML = sections.map(s =>
+      (s.heading ? `<h2>${escapeHtml(s.heading)}</h2>` : "") + mdToHtml(s.text)
+  ).join("");
+  document.body.classList.remove("printing-explain", "printing-analyse");
+  document.body.classList.add(mode === "analyse" ? "printing-analyse" : "printing-explain");
+  setTimeout(() => {
+    window.print();
+    setTimeout(() =>
+        document.body.classList.remove("printing-explain", "printing-analyse"), 200);
+  }, 50);
+}
+
+function buildHtmlDoc({ title, subtitle, meta, sections }) {
+  const body = sections.map(s =>
+      (s.heading ? `<h2>${escapeHtml(s.heading)}</h2>` : "") + mdToHtml(s.text)
+  ).join("");
+  const metaRows = meta.map(([k, v]) =>
+      `<tr><th>${escapeHtml(k)}</th><td>${escapeHtml(v)}</td></tr>`
+  ).join("");
+  return `<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title>
+<style>
+  body { font: 14px/1.6 ui-serif, Georgia, "Times New Roman", serif; max-width: 720px; margin: 40px auto; padding: 0 20px; color: #111; }
+  h1 { font: 700 28px/1.2 ui-sans-serif, system-ui, Arial, sans-serif; margin: 0 0 4px; }
+  .sub { color: #666; font: 12px ui-sans-serif, system-ui, sans-serif; margin-bottom: 18px; }
+  table.meta { border-collapse: collapse; margin: 14px 0 22px; font: 12px ui-sans-serif, system-ui, sans-serif; }
+  table.meta th { text-align: left; padding: 2px 12px 2px 0; color: #555; text-transform: uppercase; letter-spacing: 0.08em; font-size: 10px; }
+  table.meta td { padding: 2px 0; }
+  hr { border: 0; border-top: 1px solid #ccc; margin: 22px 0; }
+  h2 { font: 700 16px ui-sans-serif, system-ui, sans-serif; text-transform: uppercase; letter-spacing: 0.08em; color: #000; margin: 28px 0 10px; }
+  p { margin: 0 0 12px; }
+  b, strong { color: #000; }
+  p:has(> b:first-child) { margin-top: 16px; }
+  p:has(> b:first-child) b { color: #000; text-transform: uppercase; font-size: 13px; letter-spacing: 0.08em; }
+  ul { margin: 0 0 12px; padding-left: 22px; }
+  li { margin-bottom: 4px; }
+  footer { margin-top: 40px; color: #888; font: 11px ui-sans-serif, system-ui, sans-serif; border-top: 1px solid #eee; padding-top: 10px; }
+</style></head><body>
+<h1>${escapeHtml(title)}</h1>
+<div class="sub">${escapeHtml(subtitle)}</div>
+<table class="meta"><tbody>${metaRows}</tbody></table>
+<hr>
+${body}
+<footer>Generated by Overhead — overhead-nc.vercel.app</footer>
+</body></html>`;
+}
+
+function buildMarkdownDoc({ title, subtitle, meta, sections }) {
+  let md = `# ${title}\n\n*${subtitle}*\n\n`;
+  for (const [k, v] of meta) md += `- **${k}:** ${v}\n`;
+  md += `\n---\n\n`;
+  for (const s of sections) {
+    if (s.heading) md += `## ${s.heading}\n\n`;
+    md += s.text.trim() + "\n\n";
+  }
+  md += `---\n\n*Generated by Overhead — overhead-nc.vercel.app at ${new Date().toISOString()}*\n`;
+  return md;
+}
+
+function downloadBlob(content, filename, mimeType) {
+  const blob = new Blob([content], { type: mimeType + ";charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => {
+    URL.revokeObjectURL(a.href);
+    a.remove();
+  }, 100);
+}
+
+function ymdhm() {
+  const d = new Date(), p = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`;
 }
 
 function escapeHtml(s) {
@@ -1789,10 +1928,15 @@ document.getElementById("settings-clear").addEventListener("click", clearSetting
 
 // ---------- Analyse the sky (two sections, manual refresh by default) ----------
 let analyseTimer = null;
+/** Raw last-result per section so the Save-as exports can use the source
+ *  markdown, not the rendered HTML. { scene: {text, model}, overflies: {...} } */
+const analyseState = {};
 
 document.getElementById("analyse-btn").addEventListener("click", openAnalyse);
 document.getElementById("analyse-close").addEventListener("click", closeAnalyse);
 document.getElementById("analyse-refresh").addEventListener("click", runAnalysePair);
+document.querySelectorAll("#analyse-panel [data-save]").forEach(b =>
+  b.addEventListener("click", () => saveAnalyse(b.dataset.save)));
 document.getElementById("analyse-expand").addEventListener("click", () => {
   document.getElementById("analyse-panel").classList.toggle("fullscreen");
 });
@@ -1884,6 +2028,7 @@ async function runAnalyseSection(mode, selector) {
                 d.enriched != null ? `  ·  ${d.enriched} routes resolved` : ""
               }</span>`
             : "");
+    analyseState[mode] = { text: d.text, model: d.model, enriched: d.enriched };
   } catch (e) {
     out.className = "analyse-text error";
     out.textContent = String(e);
