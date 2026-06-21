@@ -723,6 +723,12 @@
     text-transform: uppercase;
   }
   .detail .meta-grid .v { color: var(--text); }
+  .detail .meta-grid .v .route-suspect {
+    color: var(--red);
+    font-size: 10px;
+    margin-left: 6px;
+    font-weight: 500;
+  }
   .detail .explain-btn {
     background: transparent;
     border: 1px solid var(--line);
@@ -1995,12 +2001,13 @@ async function loadRoute(callsign, card) {
     const d = await r.json();
     const slot = card.querySelector("[data-route]");
     if (d.origin && d.destination) {
-      const txt = `${d.origin} → ${d.destination}`
+      const baseTxt = `${d.origin} → ${d.destination}`
           + (d.originName && d.destName ? `   (${d.originName} → ${d.destName})` : "");
-      slot.textContent = txt;
-      cardState.set(hex, { ...(cardState.get(hex) || {}), route: txt });
+      slot.textContent = baseTxt;
+      cardState.set(hex, { ...(cardState.get(hex) || {}), route: baseTxt });
       // Resolve the two codes to lat/lon in parallel and cache for the
-      // radar's route-line renderer. Then trigger a redraw.
+      // radar's route-line renderer. Then run the integrity check and
+      // trigger a redraw.
       Promise.all([
         fetch("/api/airport?code=" + encodeURIComponent(d.origin)).then(r => r.json()),
         fetch("/api/airport?code=" + encodeURIComponent(d.destination)).then(r => r.json())
@@ -2010,6 +2017,33 @@ async function loadRoute(callsign, card) {
             origin: { code: d.origin, lat: o.lat, lon: o.lon },
             dest:   { code: d.destination, lat: x.lat, lon: x.lon }
           });
+          // ----- integrity check -----
+          // If the aircraft's actual track points more than 35° away
+          // from the bearing-to-destination (and it's clearly mid-route,
+          // not on approach/departure), the displayed route is suspect.
+          const ac = aircraft.find(a => a.hex === hex);
+          if (ac && typeof ac.track === "number" && typeof ac.lat === "number") {
+            const distToDest   = haversineNm(ac.lat, ac.lon, x.lat, x.lon);
+            const distToOrigin = haversineNm(ac.lat, ac.lon, o.lat, o.lon);
+            if (distToDest > 30 && distToOrigin > 30) {
+              const bearingExpected = bearingDeg(ac.lat, ac.lon, x.lat, x.lon);
+              const diff = Math.abs(((ac.track - bearingExpected + 540) % 360) - 180);
+              if (diff > 35) {
+                const reason = `track ${Math.round(ac.track)}° vs ${Math.round(bearingExpected)}° to dest`;
+                const suspectTxt = baseTxt + `   ⚠ suspect (${reason})`;
+                const liveSlot = document.querySelector(`.detail[data-hex='${hex}'] [data-route]`)
+                              || (document.querySelector(".detail") && document.querySelector(".detail").querySelector("[data-route]"));
+                if (liveSlot) liveSlot.innerHTML =
+                    `${baseTxt}<span class="route-suspect">  ⚠ suspect (${reason})</span>`;
+                cardState.set(hex, {
+                  ...(cardState.get(hex) || {}),
+                  route: suspectTxt,
+                  routeSuspect: true,
+                  routeSuspectReason: reason
+                });
+              }
+            }
+          }
           drawRadar();
         }
       }).catch(() => {});
@@ -2031,6 +2065,7 @@ async function runExplain(ac, card) {
   paintExplain(ac.hex);
 
   try {
+    const st = cardState.get(ac.hex) || {};
     const body = {
       hex: ac.hex,
       callsign: (ac.flight || "").trim(),
@@ -2039,6 +2074,8 @@ async function runExplain(ac, card) {
       gsKt: ac.gs,
       trkDeg: ac.track,
       units: activeUnits(),
+      routeSuspect: !!st.routeSuspect,
+      routeSuspectReason: st.routeSuspectReason || null,
       llm: llmPayload()
     };
     const r = await fetch("/api/explain", {

@@ -40,6 +40,8 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "hex must be 6 hex chars" });
   }
   const units = (src.units === "aviation") ? "aviation" : "metric";
+  const routeSuspect = !!src.routeSuspect;
+  const routeSuspectReason = (src.routeSuspectReason || "").toString();
   const callsign = (src.callsign || "").toString().trim().toUpperCase();
   const lat = parseFloat(src.lat);
   const lon = parseFloat(src.lon);
@@ -69,7 +71,8 @@ export default async function handler(req, res) {
   const prompt = buildPrompt({
     hex, callsign, lat, lon, altFt, gsKt, trkDeg, units,
     info:  acInfo.status === "fulfilled" ? acInfo.value : null,
-    route: routeInfo.status === "fulfilled" ? routeInfo.value : null
+    route: routeInfo.status === "fulfilled" ? routeInfo.value : null,
+    routeSuspect, routeSuspectReason
   });
 
   const result = await callLlm(prompt, llmSettings, { maxTokens: 1500 });
@@ -105,7 +108,8 @@ function buildPrompt(p) {
   }
   if (p.route && !p.route.missing) {
     if (p.route.origin && p.route.destination) {
-      facts.push(`Scheduled route: ${p.route.origin} → ${p.route.destination}`);
+      const suspectTag = p.routeSuspect ? "  [SUSPECT — see warning below]" : "";
+      facts.push(`Scheduled route: ${p.route.origin} → ${p.route.destination}${suspectTag}`);
     }
     if (p.route.airline) facts.push(`Airline: ${p.route.airline}`);
   }
@@ -139,6 +143,15 @@ function buildPrompt(p) {
     "Start directly with **Summary** — no preamble.",
     "",
     unitsInstruction(p.units),
+    p.routeSuspect
+      ? `\nROUTE WARNING: The scheduled route above is flagged SUSPECT — `
+        + `${p.routeSuspectReason || "the aircraft's track doesn't match the bearing to the listed destination"}. `
+        + "Treat the route as UNRELIABLE: don't confidently describe the journey "
+        + "as if it were happening. Instead, note in the Route section that the "
+        + "callsign's scheduled origin/destination is on file but the aircraft "
+        + "is currently heading somewhere else — most likely a callsign re-use "
+        + "or stale schedule data. Don't invent a replacement route."
+      : "",
     "",
     "Facts:",
     ...facts
