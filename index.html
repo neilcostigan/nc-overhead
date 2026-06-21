@@ -2617,6 +2617,8 @@ async function bootstrapTrails() {
     .slice(0, 20);
   const max = 12;       // concurrent fetches
   let i = 0;
+  let seededCount = 0, failedCount = 0;
+  const breakdown = { opensky: 0, alive: 0, empty: 0 };
   async function worker() {
     while (i < ac.length) {
       const a = ac[i++];
@@ -2624,28 +2626,41 @@ async function bootstrapTrails() {
       if ((window.__overhead.trackOf(a.hex) || []).length >= 5) continue;
       try {
         const r = await fetch("/api/track?hex=" + encodeURIComponent(a.hex));
-        if (!r.ok) continue;
+        if (!r.ok) { failedCount++; continue; }
         const d = await r.json();
-        if (!d || !Array.isArray(d.path) || d.path.length < 2) continue;
+        if (!d || !Array.isArray(d.path) || d.path.length < 2) {
+          breakdown.empty++;
+          continue;
+        }
         const points = d.path
           .filter(p => Array.isArray(p)
                     && typeof p[0] === "number"
                     && typeof p[1] === "number")
           .map(p => ({
             lat: p[0], lon: p[1],
-            // altitude may be null in the upstream payload; we treat that
-            // as 0 and let the 3D trail renderer carry the previous valid
-            // altitude forward.
             alt: typeof p[2] === "number" ? p[2] : 0,
             t:   typeof p[3] === "number" ? p[3] : Date.now()
           }));
         if (points.length >= 2) {
           window.__overhead.seedTrack(a.hex, points);
+          seededCount++;
+          breakdown[d.source || "unknown"] = (breakdown[d.source || "unknown"] || 0) + 1;
+        } else {
+          breakdown.empty++;
         }
-      } catch { /* shrug */ }
+      } catch (e) {
+        failedCount++;
+        console.warn("[3D bootstrap] fetch failed for", a.hex, e);
+      }
     }
   }
   await Promise.all(Array.from({ length: max }, worker));
+  console.log(
+    `[3D bootstrap] tried ${ac.length} aircraft,`,
+    `seeded ${seededCount},`,
+    `failed ${failedCount},`,
+    `breakdown:`, breakdown
+  );
   syncFromLiveAircraft();
 }
 
@@ -2832,9 +2847,18 @@ function paintSelBadge() {
             : (typeof altRaw === "number" ? altRaw.toLocaleString() + " ft" : "—");
   const spd = typeof ac.gs === "number" ? Math.round(ac.gs) + " kt" : "—";
   const trailLen = (window.__overhead.trackOf(hex) || []).length;
+  // Route — may not yet be resolved (async). When it is, show codes + cities.
+  const route = window.__overhead.routeOf(hex);
+  let routeHtml = "";
+  if (route) {
+    routeHtml = `<span class="row route">${route.origin.code} → ${route.dest.code}</span>`;
+  } else {
+    routeHtml = `<span class="row route faint">route: resolving…</span>`;
+  }
   selBadge.innerHTML =
       `<b>${cs}</b>  ·  ${hex.toUpperCase()}`
     + `<span class="row">alt ${alt}  ·  spd ${spd}  ·  trk ${Math.round(ac.track || 0)}°</span>`
+    + routeHtml
     + `<span class="row trail">trail: ${trailLen} point${trailLen === 1 ? "" : "s"}</span>`
     + `<span class="hint">Close 3D to see full details / Explain ✦</span>`;
   selBadge.style.display = "";
@@ -2853,6 +2877,12 @@ function on3dResize() {
   renderer.setSize(w, h);
   if (labelRenderer) labelRenderer.setSize(w, h);
   if (selTrailMat) selTrailMat.resolution.set(w, h);
+  // Every per-aircraft trail has its own LineMaterial — update them too.
+  for (const m of meshes.values()) {
+    if (m.trail && m.trail.material && m.trail.material.resolution) {
+      m.trail.material.resolution.set(w, h);
+    }
+  }
 }
 
 function animate() {
@@ -2926,12 +2956,19 @@ function syncFromLiveAircraft() {
       ]);
       const line = new THREE.Line(lineGeo,
         new THREE.LineBasicMaterial({ color: themeLineColor(), transparent: true, opacity: 0.5 }));
-      // Flight trail — vertex-coloured so old points fade out.
-      const trailGeo = new THREE.BufferGeometry();
-      const trailMat = new THREE.LineBasicMaterial({
-        vertexColors: true, transparent: true
+      // Flight trail — Line2 so we get real pixel widths (WebGL ignores
+      // linewidth on THREE.Line; here we use the addons fat-line shader).
+      const trailGeo = new LineGeometry();
+      // Seed with two zeroed points so setPositions() can replace later.
+      trailGeo.setPositions([0,0,0, 0,0,0]);
+      const trailMat = new LineMaterial({
+        color: 0x78dca0,
+        linewidth: 2.5,
+        transparent: true, opacity: 0.85,
+        worldUnits: false
       });
-      const trail = new THREE.Line(trailGeo, trailMat);
+      trailMat.resolution.set(window.innerWidth, window.innerHeight);
+      const trail = new Line2(trailGeo, trailMat);
       // Callsign / hex label floating just above the cone tip.
       const labelDiv = document.createElement("div");
       labelDiv.className = "v3d-plane-label";
@@ -2967,62 +3004,33 @@ function syncFromLiveAircraft() {
     // ----- flight trail -----
     const history = (window.__overhead && window.__overhead.trackOf(a.hex)) || [];
     if (history.length >= 2) {
-      const positions = new Float32Array(history.length * 3);
-      const colors    = new Float32Array(history.length * 3);
-      // Carry the previous altitude forward when a point has null/zero
-      // altitude (OpenSky sometimes lacks alt on early track points).
-      let lastAlt = altUnits;     // start from the current real altitude
-      for (let i = 0; i < history.length; i++) {
-        const p = history[i];
+      const positions = [];
+      // Carry previous altitude forward when a point has null/zero alt.
+      let lastAlt = altUnits;
+      for (const p of history) {
         const px = projectAircraftXY(p.lat, p.lon);
         let altPx = scaleAlt(p.alt);
         if (!(altPx > 0)) altPx = lastAlt;
         else              lastAlt = altPx;
-        positions[i * 3 + 0] = px.x;
-        // Lift by a few units so the trail never z-fights with the disc.
-        positions[i * 3 + 1] = Math.max(altPx, 2);
-        positions[i * 3 + 2] = px.z;
-        // Older = 35% colour, newer = full colour. Keeps the trail
-        // visible on both light and dark themes — never fades to black.
-        const t = 0.35 + 0.65 * (i / (history.length - 1));
-        colors[i * 3 + 0] = accent.r * t;
-        colors[i * 3 + 1] = accent.g * t;
-        colors[i * 3 + 2] = accent.b * t;
+        positions.push(px.x, Math.max(altPx, 4), px.z);
       }
-      m.trail.geometry.setAttribute("position",
-          new THREE.BufferAttribute(positions, 3));
-      m.trail.geometry.setAttribute("color",
-          new THREE.BufferAttribute(colors, 3));
-      m.trail.geometry.attributes.position.needsUpdate = true;
-      m.trail.geometry.attributes.color.needsUpdate = true;
-      m.trail.geometry.computeBoundingSphere();
-      m.trail.material.linewidth = sel ? 3 : 2;
+      m.trail.geometry.setPositions(positions);
+      m.trail.material.color = sel ? themeAmber() : themePlane();
+      m.trail.material.linewidth = sel ? 5 : 2.5;
       m.trail.material.opacity   = sel ? 1.0 : 0.85;
       m.trail.material.needsUpdate = true;
+      m.trail.computeLineDistances();
+      m.trail.visible = true;
+    } else if (history.length === 1) {
+      // Stub trail so the user sees "tracking this one — building up".
+      const xy0 = projectAircraftXY(history[0].lat, history[0].lon);
+      m.trail.geometry.setPositions([xy0.x, 4, xy0.z, xy0.x, 18, xy0.z]);
+      m.trail.material.color = sel ? themeAmber() : themePlane();
+      m.trail.material.linewidth = sel ? 5 : 2.5;
+      m.trail.computeLineDistances();
       m.trail.visible = true;
     } else {
-      // Even a single-point track gets a tiny vertical tick on the
-      // ground so the user sees "we're tracking this one — line will
-      // grow as positions arrive".
-      if (history.length === 1) {
-        const xy0 = projectAircraftXY(history[0].lat, history[0].lon);
-        const positions = new Float32Array([
-          xy0.x, 2, xy0.z,
-          xy0.x, 8, xy0.z
-        ]);
-        const colors = new Float32Array([
-          accent.r * 0.6, accent.g * 0.6, accent.b * 0.6,
-          accent.r,        accent.g,        accent.b
-        ]);
-        m.trail.geometry.setAttribute("position",
-            new THREE.BufferAttribute(positions, 3));
-        m.trail.geometry.setAttribute("color",
-            new THREE.BufferAttribute(colors, 3));
-        m.trail.geometry.computeBoundingSphere();
-        m.trail.visible = true;
-      } else {
-        m.trail.visible = false;
-      }
+      m.trail.visible = false;
     }
   }
   // Remove markers for aircraft that disappeared.
