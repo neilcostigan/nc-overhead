@@ -2872,10 +2872,32 @@ function syncFromLiveAircraft() {
       m.trail.geometry.attributes.color.needsUpdate = true;
       m.trail.geometry.computeBoundingSphere();
       m.trail.material.linewidth = sel ? 3 : 2;
+      m.trail.material.opacity   = sel ? 1.0 : 0.85;
       m.trail.material.needsUpdate = true;
       m.trail.visible = true;
     } else {
-      m.trail.visible = false;
+      // Even a single-point track gets a tiny vertical tick on the
+      // ground so the user sees "we're tracking this one — line will
+      // grow as positions arrive".
+      if (history.length === 1) {
+        const xy0 = projectAircraftXY(history[0].lat, history[0].lon);
+        const positions = new Float32Array([
+          xy0.x, 2, xy0.z,
+          xy0.x, 8, xy0.z
+        ]);
+        const colors = new Float32Array([
+          accent.r * 0.6, accent.g * 0.6, accent.b * 0.6,
+          accent.r,        accent.g,        accent.b
+        ]);
+        m.trail.geometry.setAttribute("position",
+            new THREE.BufferAttribute(positions, 3));
+        m.trail.geometry.setAttribute("color",
+            new THREE.BufferAttribute(colors, 3));
+        m.trail.geometry.computeBoundingSphere();
+        m.trail.visible = true;
+      } else {
+        m.trail.visible = false;
+      }
     }
   }
   // Remove markers for aircraft that disappeared.
