@@ -1451,15 +1451,45 @@ async function tick() {
     const r = await fetch(url, { cache: "no-store" });
     if (!r.ok) throw new Error("HTTP " + r.status);
     const data = await r.json();
-    aircraft = (data.aircraft || [])
+    const raw = data.aircraft || [];
+    let droppedOutside = 0;
+    let droppedStale = 0;
+    aircraft = raw
+      // Must have a real position (no callsign-only ghosts).
       .filter(a => typeof a.lat === "number" && typeof a.lon === "number")
+      // Compute distance + bearing.
       .map(a => ({
         ...a,
         distNm: haversineNm(CENTRE.lat, CENTRE.lon, a.lat, a.lon),
         bearing: bearingDeg(CENTRE.lat, CENTRE.lon, a.lat, a.lon),
       }))
+      // adsb.fi sometimes returns aircraft slightly beyond the requested
+      // radius (different centroid logic, edge effects). Drop those — the
+      // user's view is "within RADIUS_NM of CENTRE", period.
+      .filter(a => {
+        if (a.distNm > RADIUS_NM) { droppedOutside++; return false; }
+        return true;
+      })
+      // Drop stale positions. adsb.fi reports `seen_pos` = seconds since
+      // last position update. Anything older than 120 s is no longer
+      // really "there" — the aircraft has either landed, gone out of
+      // coverage, or the feeder dropped offline. Reporting it as live
+      // makes the analyse panel "see" aircraft that aren't actually
+      // overhead any more.
+      .filter(a => {
+        const age = typeof a.seen_pos === "number" ? a.seen_pos
+                  : (typeof a.seen === "number" ? a.seen : 0);
+        if (age > 120) { droppedStale++; return false; }
+        return true;
+      })
       .sort((a, b) => a.distNm - b.distNm);
-    setConn("ok", "Connected  ·  " + aircraft.length + " aircraft");
+
+    // Surface integrity info in the connection text so anomalies are
+    // visible, not hidden.
+    const filteredNote = (droppedOutside || droppedStale)
+        ? `  ·  ${droppedOutside} outside, ${droppedStale} stale dropped`
+        : "";
+    setConn("ok", "Connected  ·  " + aircraft.length + " aircraft" + filteredNote);
     $("#updated").textContent = new Date().toLocaleTimeString();
     render();
   } catch (e) {
