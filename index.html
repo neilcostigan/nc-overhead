@@ -523,6 +523,21 @@
   }
   #view-3d .v3d-info b { color: var(--amber); }
   #view-3d .v3d-info .hint { color: var(--text-faint); font-size: 10px; margin-top: 4px; display: block; }
+  /* 3D scene HTML labels */
+  .v3d-label {
+    font-family: var(--mono);
+    color: var(--text-faint);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    pointer-events: none;
+    white-space: nowrap;
+    text-shadow: 0 0 4px var(--bg);
+  }
+  .v3d-ring-label  { color: var(--text-faint); font-size: 9px; }
+  .v3d-centre-label{ color: var(--amber); font-size: 12px; font-weight: 700; }
+  .v3d-plane-label { color: var(--text-dim); font-size: 10px; }
+  .v3d-plane-label.sel { color: var(--amber); font-weight: 700; }
+  .v3d-route-label { color: var(--amber); font-size: 11px; font-weight: 700; }
   .overlay.bl { bottom: 16px; left: 16px; }
   .overlay.br { bottom: 16px; right: 16px; font-size: 11px; color: var(--text-dim); }
 
@@ -2500,7 +2515,15 @@ window.__overhead = {
   get CENTRE()      { return CENTRE; },
   get RADIUS_NM()   { return RADIUS_NM; },
   get selectedHex() { return selectedHex; },
-  trackOf(hex)      { return trackHistory.get(hex) || []; }
+  trackOf(hex)      { return trackHistory.get(hex) || []; },
+  routeOf(hex)      { return routeCoords.get(hex) || null; },
+  /** Replace (or seed) a track for one hex. Used by the 3D bootstrap
+   *  to inject OpenSky history before live ticks build it up. */
+  seedTrack(hex, points) {
+    if (!Array.isArray(points) || points.length === 0) return;
+    // points: [{lat, lon, alt, t}, ...] sorted oldest → newest
+    trackHistory.set(hex, points.slice(-TRACK_MAX));
+  }
 };
 // Wrap tick once to dispatch an event after each successful update.
 (function wrapTickForBridge() {
@@ -2516,15 +2539,20 @@ window.__overhead = {
 <script type="module">
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { CSS2DRenderer, CSS2DObject } from "three/addons/renderers/CSS2DRenderer.js";
 
 const host    = document.getElementById("view-3d");
 const trigger = document.getElementById("view-3d-btn");
-let scene, camera, renderer, controls;
+let scene, camera, renderer, labelRenderer, controls;
 let groundDisc, centreMarker;
 const planeGroup = new THREE.Group();          // all aircraft objects
-const meshes = new Map();                       // hex → {cone, line, ring}
+const meshes = new Map();                       // hex → {cone, line, trail, label}
 let info, closeBtn, animHandle;
 let mounted = false;
+// Route arc objects for the currently-selected aircraft.
+let routeGroup = new THREE.Group();
+const KM_PER_NM_3D = 1.852;
+const M_PER_FT_3D  = 0.3048;
 
 trigger.addEventListener("click", () => {
   if (!mounted) initScene();
@@ -2532,10 +2560,44 @@ trigger.addEventListener("click", () => {
     host.style.display = "block";
     trigger.classList.add("active");
     syncFromLiveAircraft();
+    bootstrapTrails();
   } else {
     closeView();
   }
 });
+
+/** Fetch up to 60 min of past path per visible aircraft from OpenSky
+ *  via our /api/track proxy, seed trackHistory, re-sync. Capped to
+ *  the closest 20 aircraft to be polite to the upstream and our
+ *  serverless quota. Idempotent — only seeds if no trail exists. */
+let bootstrappedOnce = false;
+async function bootstrapTrails() {
+  if (bootstrappedOnce) return;
+  bootstrappedOnce = true;
+  const ac = ((window.__overhead && window.__overhead.aircraft) || [])
+    .slice(0, 20);
+  const max = 12;       // concurrent fetches
+  let i = 0;
+  async function worker() {
+    while (i < ac.length) {
+      const a = ac[i++];
+      if (!a || !a.hex) continue;
+      if ((window.__overhead.trackOf(a.hex) || []).length >= 5) continue;
+      try {
+        const r = await fetch("/api/track?hex=" + encodeURIComponent(a.hex));
+        if (!r.ok) continue;
+        const d = await r.json();
+        if (!d || !Array.isArray(d.path) || d.path.length < 2) continue;
+        const points = d.path.map(p => ({
+          lat: p[0], lon: p[1], alt: p[2], t: p[3]
+        }));
+        window.__overhead.seedTrack(a.hex, points);
+      } catch { /* shrug */ }
+    }
+  }
+  await Promise.all(Array.from({ length: max }, worker));
+  syncFromLiveAircraft();
+}
 
 function initScene() {
   scene = new THREE.Scene();
@@ -2549,6 +2611,15 @@ function initScene() {
   renderer.setPixelRatio(window.devicePixelRatio);
   renderer.setSize(w, h);
   host.appendChild(renderer.domElement);
+
+  // Second renderer for crisp HTML text labels overlaid on the scene.
+  labelRenderer = new CSS2DRenderer();
+  labelRenderer.setSize(w, h);
+  labelRenderer.domElement.style.position = "absolute";
+  labelRenderer.domElement.style.top = "0";
+  labelRenderer.domElement.style.left = "0";
+  labelRenderer.domElement.style.pointerEvents = "none";
+  host.appendChild(labelRenderer.domElement);
 
   controls = new OrbitControls(camera, renderer.domElement);
   controls.target.set(0, 0, 0);
@@ -2569,10 +2640,13 @@ function initScene() {
   );
   scene.add(groundDisc);
 
-  // Range rings (4 concentric circles).
+  // Range rings (4 concentric circles) + distance labels.
+  const aviation = (loadSettings && loadSettings().units === "aviation");
+  const totalNm  = (window.__overhead && window.__overhead.RADIUS_NM) || 100;
   for (let i = 1; i <= 4; i++) {
+    const fraction = i / 4;
     const ringGeo = new THREE.RingGeometry(
-      radiusPx * (i / 4) - 1.5, radiusPx * (i / 4) + 1.5, 96);
+      radiusPx * fraction - 1.5, radiusPx * fraction + 1.5, 96);
     ringGeo.rotateX(-Math.PI / 2);
     const ring = new THREE.Mesh(ringGeo,
       new THREE.MeshBasicMaterial({
@@ -2581,6 +2655,18 @@ function initScene() {
       }));
     ring.position.y = 0.5;
     scene.add(ring);
+    // Distance label for this ring, placed on the east axis (+X).
+    const nm = totalNm * fraction;
+    const labelText = aviation
+        ? Math.round(nm) + " nm"
+        : Math.round(nm * KM_PER_NM_3D) + " km";
+    scene.add(makeLabel(labelText, radiusPx * fraction, 2, 0, "v3d-ring-label"));
+  }
+
+  // Centre city label.
+  const cityName = (window.__overhead && window.__overhead.CENTRE.name) || "";
+  if (cityName) {
+    scene.add(makeLabel(cityName, 0, 20, 0, "v3d-centre-label"));
   }
 
   // Centre marker (city/airport).
@@ -2601,6 +2687,7 @@ function initScene() {
   scene.add(n);
 
   scene.add(planeGroup);
+  scene.add(routeGroup);
 
   // Chrome.
   closeBtn = document.createElement("button");
@@ -2632,6 +2719,7 @@ function on3dResize() {
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
   renderer.setSize(w, h);
+  if (labelRenderer) labelRenderer.setSize(w, h);
 }
 
 function animate() {
@@ -2639,6 +2727,18 @@ function animate() {
   if (host.style.display !== "block") return;
   controls.update();
   renderer.render(scene, camera);
+  if (labelRenderer) labelRenderer.render(scene, camera);
+}
+
+/** Wrap a string in a styled HTML element and return a CSS2DObject
+ *  positioned at the given local scene coordinates. */
+function makeLabel(text, x, y, z, className) {
+  const div = document.createElement("div");
+  div.className = "v3d-label " + (className || "");
+  div.textContent = text;
+  const obj = new CSS2DObject(div);
+  obj.position.set(x, y, z);
+  return obj;
 }
 
 /** Map a distance in nautical miles to scene units (1 nm = 4 units). */
@@ -2696,10 +2796,15 @@ function syncFromLiveAircraft() {
         vertexColors: true, transparent: true
       });
       const trail = new THREE.Line(trailGeo, trailMat);
+      // Callsign / hex label floating just above the cone tip.
+      const labelDiv = document.createElement("div");
+      labelDiv.className = "v3d-plane-label";
+      const label = new CSS2DObject(labelDiv);
       planeGroup.add(cone);
       planeGroup.add(line);
       planeGroup.add(trail);
-      m = { cone, line, trail };
+      planeGroup.add(label);
+      m = { cone, line, trail, label, labelDiv };
       meshes.set(a.hex, m);
     }
     m.cone.position.set(xy.x, altUnits, xy.z);
@@ -2712,11 +2817,16 @@ function syncFromLiveAircraft() {
       new THREE.Vector3(xy.x, altUnits, xy.z)
     ];
     m.line.geometry.setFromPoints(pts);
+    // Callsign label floating just above the cone.
+    const cs = (a.flight || "").trim() || a.hex.toUpperCase();
+    m.labelDiv.textContent = cs;
+    m.label.position.set(xy.x, altUnits + 14, xy.z);
     // Colour: selected = amber.
     const sel = a.hex === (window.__overhead && window.__overhead.selectedHex);
     const accent = sel ? themeAmber() : themePlane();
     m.cone.material.color = accent;
     m.cone.material.needsUpdate = true;
+    m.labelDiv.className = sel ? "v3d-plane-label sel" : "v3d-plane-label";
 
     // ----- flight trail -----
     const history = (window.__overhead && window.__overhead.trackOf(a.hex)) || [];
@@ -2753,6 +2863,7 @@ function syncFromLiveAircraft() {
       planeGroup.remove(m.cone);
       planeGroup.remove(m.line);
       planeGroup.remove(m.trail);
+      planeGroup.remove(m.label);
       m.cone.geometry.dispose();
       m.cone.material.dispose();
       m.line.geometry.dispose();
@@ -2762,6 +2873,72 @@ function syncFromLiveAircraft() {
       meshes.delete(hex);
     }
   }
+
+  // Route arc for the selected aircraft, if we've resolved origin + dest.
+  redrawRouteArc();
+}
+
+/** Clear and redraw the route arc + airport labels for whichever aircraft
+ *  is currently selected. Reads window.routeCoords cached by loadRoute. */
+function redrawRouteArc() {
+  // Tear down anything previously drawn.
+  while (routeGroup.children.length > 0) {
+    const c = routeGroup.children[0];
+    routeGroup.remove(c);
+    if (c.geometry) c.geometry.dispose();
+    if (c.material) c.material.dispose();
+  }
+  const hex = window.__overhead && window.__overhead.selectedHex;
+  if (!hex) return;
+  const rc = window.__overhead.routeOf(hex);
+  if (!rc) return;
+
+  const ox = projectAircraftXY(rc.origin.lat, rc.origin.lon);
+  const dx = projectAircraftXY(rc.dest.lat,   rc.dest.lon);
+
+  // Sample a great-circle (sampled in 3D the same way the 2D radar
+  // does it, but laid on the ground plane). Lift the line slightly above
+  // the disc so it doesn't z-fight.
+  const N = 64;
+  const f1 = rc.origin.lat * Math.PI / 180;
+  const l1 = rc.origin.lon * Math.PI / 180;
+  const f2 = rc.dest.lat   * Math.PI / 180;
+  const l2 = rc.dest.lon   * Math.PI / 180;
+  const d = 2 * Math.asin(Math.sqrt(
+      Math.sin((f2 - f1) / 2) ** 2
+    + Math.cos(f1) * Math.cos(f2) * Math.sin((l2 - l1) / 2) ** 2));
+  if (d === 0) return;
+  const pts = [];
+  for (let i = 0; i <= N; i++) {
+    const f = i / N;
+    const A = Math.sin((1 - f) * d) / Math.sin(d);
+    const B = Math.sin(f * d) / Math.sin(d);
+    const x = A * Math.cos(f1) * Math.cos(l1) + B * Math.cos(f2) * Math.cos(l2);
+    const y = A * Math.cos(f1) * Math.sin(l1) + B * Math.cos(f2) * Math.sin(l2);
+    const z = A * Math.sin(f1) + B * Math.sin(f2);
+    const lat = Math.atan2(z, Math.sqrt(x * x + y * y)) * 180 / Math.PI;
+    const lon = Math.atan2(y, x) * 180 / Math.PI;
+    const p   = projectAircraftXY(lat, lon);
+    pts.push(new THREE.Vector3(p.x, 2, p.z));
+  }
+  const geo = new THREE.BufferGeometry().setFromPoints(pts);
+  const mat = new THREE.LineDashedMaterial({
+    color: themeAmber(), dashSize: 8, gapSize: 6,
+    transparent: true, opacity: 0.8
+  });
+  const line = new THREE.Line(geo, mat);
+  line.computeLineDistances();
+  routeGroup.add(line);
+
+  // Endpoint markers + labels.
+  const markerMat = new THREE.MeshBasicMaterial({ color: themeAmber() });
+  const markerGeo = new THREE.SphereGeometry(5, 12, 12);
+  const oMarker = new THREE.Mesh(markerGeo, markerMat);
+  oMarker.position.set(ox.x, 3, ox.z); routeGroup.add(oMarker);
+  const dMarker = new THREE.Mesh(markerGeo, markerMat);
+  dMarker.position.set(dx.x, 3, dx.z); routeGroup.add(dMarker);
+  routeGroup.add(makeLabel(rc.origin.code, ox.x, 18, ox.z, "v3d-route-label"));
+  routeGroup.add(makeLabel(rc.dest.code,   dx.x, 18, dx.z, "v3d-route-label"));
 }
 
 /** Convert lat/lon to scene coords. Same equirectangular trick the 2D
