@@ -1581,7 +1581,26 @@ function drawRadar() {
   // aircraft
   ctx.font = "11px " + getComputedStyle(document.body).fontFamily;
   drawnHits.length = 0;
-  for (const a of aircraft) {
+  // Track label bounding boxes drawn this frame so we can skip any new
+  // label that would overlap one already in place. Selected aircraft is
+  // drawn last so its label always wins.
+  const placedLabels = [];
+  const labelH = 12, labelPad = 2;
+  function labelFits(x, y, text) {
+    const w = ctx.measureText(text).width + labelPad * 2;
+    for (const b of placedLabels) {
+      if (x < b.x + b.w && x + w > b.x && y < b.y + b.h && y + labelH > b.y) return false;
+    }
+    placedLabels.push({ x, y, w, h: labelH });
+    return true;
+  }
+
+  // Sort so the SELECTED aircraft renders last → its label is drawn
+  // after the others and (because we skip overlapping labels in order)
+  // always gets priority.
+  const order = aircraft.slice().sort((a, b) =>
+      (a.hex === selectedHex ? 1 : 0) - (b.hex === selectedHex ? 1 : 0));
+  for (const a of order) {
     if (a.distNm > RADIUS_NM) continue;
     const scale = r / RADIUS_NM;
     const dLat = a.lat - CENTRE.lat;
@@ -1602,8 +1621,13 @@ function drawRadar() {
 
     const cs = (a.flight || a.hex || "").trim();
     if (cs) {
-      ctx.fillStyle = sel ? amberColor : labelPlane;
-      ctx.fillText(cs, x + 8, y + 4);
+      const lx = x + 8, ly = y - 5;
+      // Selected aircraft always shows its label; others only if there's
+      // room (no overlap with an already-placed label).
+      if (sel || labelFits(lx, ly, cs)) {
+        ctx.fillStyle = sel ? amberColor : labelPlane;
+        ctx.fillText(cs, lx, y + 4);
+      }
     }
     drawnHits.push({ x, y, hex: a.hex });
   }
