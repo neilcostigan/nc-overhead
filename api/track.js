@@ -1,22 +1,18 @@
 // Vercel serverless function — fetches up to ~60 minutes of past
-// position fixes for a single aircraft from OpenSky's public
-// /tracks/all endpoint. Used by the 3D view to bootstrap visible
-// trails on first open so the user doesn't have to wait for live
-// ticks to build them up.
+// position fixes for a single aircraft. Tries OpenSky first
+// (/tracks/all), falls back to airplanes.live's /v2/icao/<hex>
+// trace endpoint when OpenSky says no.
 //
 // Endpoint: GET /api/track?hex=ABC123
 //
-// Returns: { hex, path: [[lat, lon, altFt, t], ...] }  (oldest first)
+// Returns: { hex, path: [[lat, lon, altFt, t], ...], source }
 // or       { hex, missing: true }
-//
-// OpenSky is free, no key required for public endpoints; rate-limited
-// to a few requests per second per IP. We cache aggressively (60 s
-// per hex) so an open 3D view doesn't hammer them.
 
-const UPSTREAM = "https://opensky-network.org/api/tracks/all";
+const OPENSKY = "https://opensky-network.org/api/tracks/all";
+const ALIVE   = "https://api.airplanes.live/v2/icao";  // /<hex>
 
 const CACHE_MS = 60 * 1000;
-const cache = new Map();   // hex → { ts, body }
+const cache = new Map();
 
 const M_TO_FT = 3.28084;
 
@@ -32,38 +28,68 @@ export default async function handler(req, res) {
     return ok(res, hit.body);
   }
 
+  // 1) Try OpenSky.
+  let body = await fetchOpenSky(hex, now);
+  if (!body.path || body.path.length < 2) {
+    // 2) Fall back to airplanes.live.
+    const alt = await fetchAirplanesLive(hex, now);
+    if (alt.path && alt.path.length >= 2) body = alt;
+    else if (!body.path) body = alt;
+  }
+  cache.set(hex, { ts: now, body });
+  res.setHeader("X-Cache", "MISS");
+  ok(res, body);
+}
+
+async function fetchOpenSky(hex, now) {
   try {
-    // time=0 → latest available track segment
-    const r = await fetch(`${UPSTREAM}?icao24=${hex}&time=0`, {
+    const r = await fetch(`${OPENSKY}?icao24=${hex}&time=0`, {
       headers: {
         "Accept": "application/json",
         "User-Agent": "nc-overhead/0.1 (https://overhead-nc.vercel.app)"
       }
     });
-    if (r.status === 404) {
-      const body = { hex, missing: true };
-      cache.set(hex, { ts: now, body });
-      return ok(res, body);
-    }
-    if (!r.ok) {
-      return res.status(200).json({ hex, _upstream: r.status });
-    }
+    if (!r.ok) return { hex, source: "opensky", _upstream: r.status };
     const data = await r.json();
-    // path: [[time, lat, lon, baroAltMetres, heading, onGround], ...]
     const raw = Array.isArray(data.path) ? data.path : [];
     const path = raw.map(p => ([
-      p[1],                                        // lat
-      p[2],                                        // lon
-      typeof p[3] === "number" ? p[3] * M_TO_FT    // alt → ft
-                                : 0,
-      p[0] ? p[0] * 1000 : now                     // t (ms)
+      p[1], p[2],
+      typeof p[3] === "number" ? p[3] * M_TO_FT : null,
+      p[0] ? p[0] * 1000 : now
     ])).filter(p => typeof p[0] === "number" && typeof p[1] === "number");
-    const body = { hex, path };
-    cache.set(hex, { ts: now, body });
-    res.setHeader("X-Cache", "MISS");
-    ok(res, body);
+    return { hex, source: "opensky", path };
   } catch (e) {
-    res.status(200).json({ hex, _error: String(e) });
+    return { hex, source: "opensky", _error: String(e) };
+  }
+}
+
+async function fetchAirplanesLive(hex, now) {
+  // airplanes.live returns the current state plus a `trace` field for
+  // recently-seen aircraft (when its feeders have tracked it).
+  try {
+    const r = await fetch(`${ALIVE}/${hex}`, {
+      headers: {
+        "Accept": "application/json",
+        "User-Agent": "nc-overhead/0.1"
+      }
+    });
+    if (!r.ok) return { hex, source: "alive", _upstream: r.status };
+    const data = await r.json();
+    // ac[0].trace = [[seen_ago_s, lat, lon, alt_ft, gs, track, ...], ...]
+    // newest first; we reverse to oldest-first for the client.
+    const ac0 = Array.isArray(data.ac) ? data.ac[0] : null;
+    const trace = ac0 && Array.isArray(ac0.trace) ? ac0.trace : [];
+    const path = trace
+      .filter(p => typeof p[1] === "number" && typeof p[2] === "number")
+      .map(p => [
+        p[1], p[2],
+        typeof p[3] === "number" ? p[3] : null,
+        now - (typeof p[0] === "number" ? p[0] * 1000 : 0)
+      ])
+      .reverse();
+    return { hex, source: "alive", path };
+  } catch (e) {
+    return { hex, source: "alive", _error: String(e) };
   }
 }
 

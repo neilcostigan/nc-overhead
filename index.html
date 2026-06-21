@@ -2588,10 +2588,21 @@ async function bootstrapTrails() {
         if (!r.ok) continue;
         const d = await r.json();
         if (!d || !Array.isArray(d.path) || d.path.length < 2) continue;
-        const points = d.path.map(p => ({
-          lat: p[0], lon: p[1], alt: p[2], t: p[3]
-        }));
-        window.__overhead.seedTrack(a.hex, points);
+        const points = d.path
+          .filter(p => Array.isArray(p)
+                    && typeof p[0] === "number"
+                    && typeof p[1] === "number")
+          .map(p => ({
+            lat: p[0], lon: p[1],
+            // altitude may be null in the upstream payload; we treat that
+            // as 0 and let the 3D trail renderer carry the previous valid
+            // altitude forward.
+            alt: typeof p[2] === "number" ? p[2] : 0,
+            t:   typeof p[3] === "number" ? p[3] : Date.now()
+          }));
+        if (points.length >= 2) {
+          window.__overhead.seedTrack(a.hex, points);
+        }
       } catch { /* shrug */ }
     }
   }
@@ -2833,14 +2844,22 @@ function syncFromLiveAircraft() {
     if (history.length >= 2) {
       const positions = new Float32Array(history.length * 3);
       const colors    = new Float32Array(history.length * 3);
+      // Carry the previous altitude forward when a point has null/zero
+      // altitude (OpenSky sometimes lacks alt on early track points).
+      let lastAlt = altUnits;     // start from the current real altitude
       for (let i = 0; i < history.length; i++) {
         const p = history[i];
         const px = projectAircraftXY(p.lat, p.lon);
+        let altPx = scaleAlt(p.alt);
+        if (!(altPx > 0)) altPx = lastAlt;
+        else              lastAlt = altPx;
         positions[i * 3 + 0] = px.x;
-        positions[i * 3 + 1] = scaleAlt(p.alt);
+        // Lift by a few units so the trail never z-fights with the disc.
+        positions[i * 3 + 1] = Math.max(altPx, 2);
         positions[i * 3 + 2] = px.z;
-        // Older = dim, newer = full colour.
-        const t = i / (history.length - 1);
+        // Older = 35% colour, newer = full colour. Keeps the trail
+        // visible on both light and dark themes — never fades to black.
+        const t = 0.35 + 0.65 * (i / (history.length - 1));
         colors[i * 3 + 0] = accent.r * t;
         colors[i * 3 + 1] = accent.g * t;
         colors[i * 3 + 2] = accent.b * t;
@@ -2852,6 +2871,8 @@ function syncFromLiveAircraft() {
       m.trail.geometry.attributes.position.needsUpdate = true;
       m.trail.geometry.attributes.color.needsUpdate = true;
       m.trail.geometry.computeBoundingSphere();
+      m.trail.material.linewidth = sel ? 3 : 2;
+      m.trail.material.needsUpdate = true;
       m.trail.visible = true;
     } else {
       m.trail.visible = false;
